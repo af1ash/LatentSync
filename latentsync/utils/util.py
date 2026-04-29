@@ -15,22 +15,24 @@
 import os
 import numpy as np
 import json
-from typing import Union
+# from typing import Union
 from pathlib import Path
 import matplotlib.pyplot as plt
-import imageio
+# import imageio
 
 import torch
 import torch.nn as nn
-import torchvision
+# import torchvision
 import torch.distributed as dist
 from torchvision import transforms
 
-from einops import rearrange
+# from einops import rearrange
 import cv2
 from decord import AudioReader, VideoReader
 import shutil
 import subprocess
+import av
+from fractions import Fraction
 
 
 # Machine epsilon for a float32 (single precision)
@@ -49,9 +51,7 @@ def read_video(video_path: str, change_fps=True, use_decord=True):
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
-        command = (
-            f"ffmpeg -loglevel error -y -nostdin -i {video_path} -r 25 -crf 18 {os.path.join(temp_dir, 'video.mp4')}"
-        )
+        command = f"ffmpeg -loglevel error -y -nostdin -i {video_path} -r 25 -crf 18 {os.path.join(temp_dir, 'video.mp4')}"
         subprocess.run(command, shell=True)
         target_video_path = os.path.join(temp_dir, "video.mp4")
     else:
@@ -113,21 +113,75 @@ def read_audio(audio_path: str, audio_sample_rate: int = 16000):
 
 
 def write_video(video_output_path: str, video_frames: np.ndarray, fps: int):
-    with imageio.get_writer(
-        video_output_path,
-        fps=fps,
-        codec="libx264",
-        macro_block_size=None,
-        ffmpeg_params=["-crf", "13"],
-        ffmpeg_log_level="error",
-    ) as writer:
-        for video_frame in video_frames:
-            writer.append_data(video_frame)
+    # with imageio.get_writer(
+    #     video_output_path,
+    #     fps=fps,
+    #     codec="libx264",
+    #     macro_block_size=None,
+    #     ffmpeg_params=["-crf", "13"],
+    #     ffmpeg_log_level="error",
+    # ) as writer:
+    #     for video_frame in video_frames:
+    #         writer.append_data(video_frame)
+
+    container = av.open(video_output_path, mode="w")
+    pix_fmt, codec, audio_codec, default_options = [
+        "yuv420p",
+        "libx264",
+        "aac",
+        {
+            "tune": "zerolatency",
+        },
+    ]
+    for video_pts, frame_data in enumerate(video_frames):
+        if video_pts == 0:
+            # 视频流配置
+            height, width, vchannels = frame_data.shape
+            video_stream = container.add_stream(
+                codec, rate=fps
+            )
+            video_stream.width = width
+            video_stream.height = height
+            video_stream.pix_fmt = pix_fmt  # 常用像素格式
+            video_stream.time_base = Fraction(1, fps)
+            video_stream.options = {
+                "preset": "ultrafast",
+                "tune": "zerolatency",
+                "crf": "23",
+                "g": str(fps),  # GOP = 1秒
+                "keyint_min": str(fps),
+                "x264opts": "repeat-headers=1",  # 👈 关键：重复 SPS/PPS
+            }
+
+            if vchannels == 4:
+                vformat = "rgba"
+            else:
+                vformat = "rgb24"
+
+        # 创建 AVFrame
+        av_frame = av.VideoFrame.from_ndarray(
+            frame_data, format=vformat
+        )
+        # 设置时间戳
+        av_frame.pts = video_pts
+        # 编码帧
+        for packet in video_stream.encode(av_frame):
+            container.mux(packet)
+
+    # 冲洗编码器（flush）
+    for packet in video_stream.encode():
+        container.mux(packet)
+    # Flush audio stream
+    # 关闭容器
+    return container.close()
+
 
 
 def write_video_cv2(video_output_path: str, video_frames: np.ndarray, fps: int):
     height, width = video_frames[0].shape[:2]
-    out = cv2.VideoWriter(video_output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    out = cv2.VideoWriter(
+        video_output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+    )
     # out = cv2.VideoWriter(video_output_path, cv2.VideoWriter_fourcc(*"vp09"), fps, (width, height))
     for frame in video_frames:
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -162,7 +216,9 @@ def check_video_fps(video_path: str):
     cam = cv2.VideoCapture(video_path)
     fps = cam.get(cv2.CAP_PROP_FPS)
     if fps != 25:
-        raise ValueError(f"Video FPS is not 25, it is {fps}. Please convert the video to 25 FPS.")
+        raise ValueError(
+            f"Video FPS is not 25, it is {fps}. Please convert the video to 25 FPS."
+        )
 
 
 def one_step_sampling(ddim_scheduler, pred_noise, timesteps, x_t):
@@ -175,7 +231,9 @@ def one_step_sampling(ddim_scheduler, pred_noise, timesteps, x_t):
     if ddim_scheduler.config.prediction_type == "epsilon":
         beta_prod_t = beta_prod_t[:, None, None, None, None]
         alpha_prod_t = alpha_prod_t[:, None, None, None, None]
-        pred_original_sample = (x_t - beta_prod_t ** (0.5) * pred_noise) / alpha_prod_t ** (0.5)
+        pred_original_sample = (
+            x_t - beta_prod_t ** (0.5) * pred_noise
+        ) / alpha_prod_t ** (0.5)
     else:
         raise NotImplementedError("This prediction type is not implemented yet")
 
@@ -269,12 +327,18 @@ def count_video_time(video_path):
 
 def check_ffmpeg_installed():
     # Run the ffmpeg command with the -version argument to check if it's installed
-    result = subprocess.run("ffmpeg -version", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    result = subprocess.run(
+        "ffmpeg -version", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+    )
     if not result.returncode == 0:
-        raise FileNotFoundError("ffmpeg not found, please install it by:\n    $ conda install -c conda-forge ffmpeg")
+        raise FileNotFoundError(
+            "ffmpeg not found, please install it by:\n    $ conda install -c conda-forge ffmpeg"
+        )
 
 
-def check_model_and_download(ckpt_path: str, huggingface_model_id: str = "ByteDance/LatentSync-1.5"):
+def check_model_and_download(
+    ckpt_path: str, huggingface_model_id: str = "ByteDance/LatentSync-1.5"
+):
     if not os.path.exists(ckpt_path):
         ckpt_path_obj = Path(ckpt_path)
         download_cmd = f"huggingface-cli download {huggingface_model_id} {Path(*ckpt_path_obj.parts[1:])} --local-dir {Path(ckpt_path_obj.parts[0])}"

@@ -130,7 +130,7 @@ class VideoWriter:
     def encode_frame(self, frame_data, audio_data, video_pts):
         # print(f"{frame_data.shape=},{audio_data.shape=}")
         # 创建 AVFrame
-        print(f"{self.vformat=}")
+        # print(f"{self.vformat=}")
         av_frame = av.VideoFrame.from_ndarray(frame_data, format=self.vformat)
         # 设置时间戳
         av_frame.pts = video_pts

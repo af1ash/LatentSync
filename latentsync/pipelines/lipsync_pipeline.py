@@ -637,39 +637,36 @@ class LipsyncPipeline(DiffusionPipeline):
             decoded_latents = self.paste_surrounding_pixels_back(
                 decoded_latents, ref_pixel_values, 1 - masks, device, weight_dtype
             )
-            synced_video_frames.append(decoded_latents)
+            # synced_video_frames.append(decoded_latents)
         
-        faces = torch.cat(synced_video_frames)
-        video_frames = video_frames[: len(faces)]
-        for i, face in enumerate(faces):
-            print(f"restore face {i=}")
-            x1, y1, x2, y2 = boxes[i]
-            # face = boxes[i]
-            height = int(y2 - y1)
-            width = int(x2 - x1)
-            face = torchvision.transforms.functional.resize(
-                face, size=(height, width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
-            )
-            out_frame = self.image_processor.restorer.restore_img(video_frames[i], face, affine_matrices[i])
-
-            audio_data = audio_samples[i*audio_chunk_size:(i+1) *audio_chunk_size]
-            audio_data = audio_data.numpy()
-            if len(audio_data) < audio_chunk_size:
-                # 长度不够的时候, 补充静音
-                audio_data = np.pad(
-                    audio_data,
-                    (0, audio_chunk_size - len(audio_data)),
-                    "constant",
-                    constant_values=0,
+            for index, new_face in enumerate(decoded_latents):
+                ni = i * num_frames + index
+                # restore face
+                x1, y1, x2, y2 = boxes[ni]
+                org_height = int(y2 - y1)
+                org_width = int(x2 - x1)
+                face = torchvision.transforms.functional.resize(
+                    new_face, size=(org_height, org_width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
                 )
-            audio_data = np.reshape(
-                audio_data, (audio_channel, len(audio_data))
-            )
-            audio_data = audio_data.astype(np.float32)
-            print(f"encode to file {i=}")
-            if i == 0:
-                vwriter.init_stream(out_frame, audio_data, fps=video_fps, sample_rate=audio_sample_rate)
-            vwriter.encode_frame(out_frame, audio_data, video_pts=i)
+                out_frame = self.image_processor.restorer.restore_img(video_frames[ni], face, affine_matrices[ni])
+
+                audio_data = audio_samples[ni*audio_chunk_size:(ni+1) *audio_chunk_size]
+                audio_data = audio_data.numpy()
+                if len(audio_data) < audio_chunk_size:
+                    # 长度不够的时候, 补充静音
+                    audio_data = np.pad(
+                        audio_data,
+                        (0, audio_chunk_size - len(audio_data)),
+                        "constant",
+                        constant_values=0,
+                    )
+                audio_data = np.reshape(
+                    audio_data, (audio_channel, len(audio_data))
+                )
+                audio_data = audio_data.astype(np.float32)
+                if ni == 0:
+                    vwriter.init_stream(out_frame, audio_data, fps=video_fps, sample_rate=audio_sample_rate)
+                vwriter.encode_frame(out_frame, audio_data, video_pts=ni)
         vwriter.close()
 
         # synced_video_frames = self.restore_video(torch.cat(synced_video_frames), video_frames, boxes, affine_matrices)

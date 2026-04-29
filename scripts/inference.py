@@ -86,7 +86,8 @@ def main(config, args):
 
     print(f"Initial seed: {torch.initial_seed()}")
 
-    pipeline(
+    # pipeline(
+    pipeline.stream(
         video_path=args.video_path,
         audio_path=args.audio_path,
         video_out_path=args.video_out_path,

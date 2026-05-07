@@ -128,6 +128,8 @@ def main(config):
         config.ckpt.resume_ckpt_path,
         device=device,
     )
+    # TODO 一阶段训练结果, 在二阶段使用是导致无法开始
+    resume_global_step = 0
 
     if config.model.add_audio_layer and config.run.use_syncnet:
         syncnet_config = OmegaConf.load(config.data.syncnet_config_path)

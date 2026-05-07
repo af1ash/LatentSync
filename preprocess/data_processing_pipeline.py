@@ -24,6 +24,7 @@ from preprocess.sync_av import sync_av_multi_gpus
 from preprocess.filter_visual_quality import filter_visual_quality_multi_gpus
 from preprocess.remove_incorrect_affined import remove_incorrect_affined_multiprocessing
 from latentsync.utils.util import check_model_and_download
+from preprocess.write_fileslist import FileslistWriter
 
 
 def data_processing_pipeline(
@@ -56,7 +57,8 @@ def data_processing_pipeline(
 
     print("Affine transforming videos...")
     affine_transformed_dir = os.path.join(os.path.dirname(input_dir), "affine_transformed")
-    affine_transform_multi_gpus(segmented_dir, affine_transformed_dir, temp_dir, resolution, per_gpu_num_workers // 2)
+    # affine_transform_multi_gpus(segmented_dir, affine_transformed_dir, temp_dir, resolution, per_gpu_num_workers // 2)
+    affine_transform_multi_gpus(segmented_dir, affine_transformed_dir, temp_dir, resolution, total_num_workers)
 
     # print("Removing incorrect affined videos...")
     # remove_incorrect_affined_multiprocessing(affine_transformed_dir, total_num_workers)
@@ -68,6 +70,11 @@ def data_processing_pipeline(
     print("Filtering visual quality...")
     high_visual_quality_dir = os.path.join(os.path.dirname(input_dir), "high_visual_quality")
     filter_visual_quality_multi_gpus(av_synced_dir, high_visual_quality_dir, per_gpu_num_workers)
+
+    print("Write Filelist")
+    filelist_filename = os.path.join(os.path.dirname(input_dir), "filelist.txt")
+    writer = FileslistWriter(filelist_filename)
+    writer.append_dataset(high_visual_quality_dir)
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ def main(config, args):
         audio_feat_length=config.data.audio_feat_length,
     )
 
-    vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse", torch_dtype=dtype)
+    vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=dtype, local_files_only=True)
     vae.config.scaling_factor = 0.18215
     vae.config.shift_factor = 0
 

@@ -677,8 +677,8 @@ class LipsyncPipeline(DiffusionPipeline):
         if is_train:
             self.unet.train()
 
-        # if os.path.exists(temp_dir):
-        #     shutil.rmtree(temp_dir)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
         # os.makedirs(temp_dir, exist_ok=True)
 
         # write_video(os.path.join(temp_dir, "video.mp4"), synced_video_frames, fps=video_fps)

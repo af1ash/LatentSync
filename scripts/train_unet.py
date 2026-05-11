@@ -92,7 +92,7 @@ def main(config):
 
     noise_scheduler = DDIMScheduler.from_pretrained("configs")
 
-    vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16)
+    vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16, local_files_only=True)
     vae.config.scaling_factor = 0.18215
     vae.config.shift_factor = 0
 

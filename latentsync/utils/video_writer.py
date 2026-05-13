@@ -7,6 +7,7 @@ Desc: 视频编码及推流
 """
 
 import av
+import numpy as np
 
 from fractions import Fraction
 
@@ -138,7 +139,7 @@ class VideoWriter:
         for packet in self.video_stream.encode(av_frame):
             self.container.mux(packet)
 
-        if audio_data is not None:
+        if audio_data is not None and self.audio_stream:
             audio_avframe = av.AudioFrame.from_ndarray(
                 audio_data,
                 format=self.audio_format,
@@ -250,31 +251,85 @@ class VideoWriter:
 class VideoReader:
     def __init__(self, input_videoname):
         self.input_videoname = input_videoname
+        self.container = av.open(self.input_videoname)
+        self.audio_stream = None
+        self.video_stream = None
+        for stream in self.container.streams:
+            if stream.type == 'audio':
+                self.audio_stream = stream
+            elif stream.type == "video":
+                self.video_stream = stream
 
     @property
-    def average_rate(self):
-        with av.open(self.input_videoname) as container:
-            video_stream = container.streams.video[0]
-            return video_stream.average_rate
+    def fps(self):
+        return int(self.video_stream.average_rate)
 
     @property
     def frames(self):
-        with av.open(self.input_videoname) as container:
-            video_stream = container.streams.video[0]
-            return video_stream.frames
+        return self.video_stream.frames
+    
+    @property
+    def sample_rate(self):
+        if self.audio_stream:
+            return int(1 / self.audio_stream.time_base)
+        return None
 
-    def read(self, format="bgra"):
+    @property
+    def channels(self):
+        if self.audio_stream:
+            return self.audio_stream.layout.channels
+        return None
+    
+    @property
+    def layout(self):
+        if self.audio_stream:
+            return self.audio_stream.layout.name
+        return None
+
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc, tb):
+        self.container.close()
+    
+    def read(self, format="bgra", type_="video"):
         frame_list = []
+        for frame in self.read_iter(format, type_):
+            frame_list.append(frame)
+        if type_=="audio":
+            return np.concatenate(frame_list, axis=1)
+        return np.array(frame_list)
 
-        with av.open(self.input_videoname) as container:
-            for _, frame in enumerate(container.decode(video=0)):
-                # 转换为 RGBA（保留 Alpha）
-                img = frame.to_ndarray(format=format)
-                frame_list.append(img)
-        return frame_list
+    def read_iter(self, format="rgba", type_="video"):
+        if type_ == "video":
+            read_stream = self.video_stream
+            frame_kwargs= {
+                "format": format
+            }
+        elif type_ == "audio":
+            read_stream = self.audio_stream
+            frame_kwargs = {}
+        else:
+            raise ValueError(f"unknown {type_=}")
+        self.container.seek(0)
+        for frame in self.container.decode(read_stream):
+            data = frame.to_ndarray(**frame_kwargs)
+            # data 的维度取决于格式：
+            # 如果是平面格式 (如 fltp, s16p): shape 为 (通道数, 采样点数)
+            # 如果是交错格式 (如 flt, s16): shape 为 (1, 采样点数 * 通道数)
+            if type_ == "audio":
+                if self.audio_stream.channels == 2:
+                    if 'p' in self.audio_stream.format.name:
+                        # 平面格式：直接获取左右声道
+                        left_channel = data[0]
+                        right_channel = data[1]
+                    else:
+                        # 交错格式：需要切片分离 [L, R, L, R, ...]
+                        left_channel = data[0, ::2]
+                        right_channel = data[0, 1::2]
+                    data = np.array([left_channel, right_channel])
+            # print(f"{data.shape=}")
+            yield data 
 
-    def read_iter(self, format="bgra"):
-        with av.open(self.input_videoname) as container:
-            for frame in container.decode(video=0):
-                img = frame.to_ndarray(format=format)
-                yield img
+    def close(self):
+        return self.container.close()

@@ -3,10 +3,12 @@
 import inspect
 import math
 import os
+from pathlib import Path
 import shutil
 from typing import Callable, List, Optional, Union
 import subprocess
 
+import cv2
 import numpy as np
 import torch
 import torchvision
@@ -33,7 +35,7 @@ from ..models.unet import UNet3DConditionModel
 from ..utils.util import read_video, read_audio, write_video, check_ffmpeg_installed
 from ..utils.image_processor import ImageProcessor, load_fixed_mask
 from ..whisper.audio2feature import Audio2Feature
-from ..utils.video_writer import VideoWriter
+from ..utils.video_writer import VideoWriter, VideoReader
 import tqdm
 import soundfile as sf
 
@@ -255,6 +257,8 @@ class LipsyncPipeline(DiffusionPipeline):
         affine_matrices = []
         print(f"Affine transforming {len(video_frames)} faces...")
         for frame in tqdm.tqdm(video_frames):
+            if frame.shape[-1] == 4:
+                frame = frame[:, :, :3]
             face, box, affine_matrix = self.image_processor.affine_transform(frame)
             faces.append(face)
             boxes.append(box)
@@ -540,7 +544,9 @@ class LipsyncPipeline(DiffusionPipeline):
         whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
         audio_samples = read_audio(audio_path)
-        video_frames = read_video(video_path, use_decord=False)
+        # video_frames = read_video(video_path, use_decord=False)
+        with VideoReader(video_path) as vr:
+            video_frames = vr.read()
 
         video_frames, faces, boxes, affine_matrices = self.loop_video(whisper_chunks, video_frames)
 
@@ -550,7 +556,8 @@ class LipsyncPipeline(DiffusionPipeline):
         # audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
         audio_chunk_size = int(audio_sample_rate / video_fps)
         audio_channel = 1
-        vwriter = VideoWriter(video_out_path, outformat=".mp4")
+        video_out_path = Path(video_out_path)
+        vwriter = VideoWriter(str(video_out_path), outformat=video_out_path.suffix)
 
         num_channels_latents = self.vae.config.latent_channels
 
@@ -638,7 +645,7 @@ class LipsyncPipeline(DiffusionPipeline):
                 decoded_latents, ref_pixel_values, 1 - masks, device, weight_dtype
             )
             # synced_video_frames.append(decoded_latents)
-        
+            alpha = None 
             for index, new_face in enumerate(decoded_latents):
                 ni = i * num_frames + index
                 # restore face
@@ -648,8 +655,28 @@ class LipsyncPipeline(DiffusionPipeline):
                 face = torchvision.transforms.functional.resize(
                     new_face, size=(org_height, org_width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
                 )
-                out_frame = self.image_processor.restorer.restore_img(video_frames[ni], face, affine_matrices[ni])
+                org_frame = video_frames[ni]
 
+                if org_frame.shape[-1] == 4:
+                    if not (
+                        np.all(org_frame[:, :, 3] == 255) or np.all(org_frame[:, :, 3] == 0)
+                    ):
+                        alpha = org_frame[:, :, 3]
+                    oframe = org_frame[:, :, :3]
+                else:
+                    oframe = org_frame
+                out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrices[ni])
+
+                if alpha is not None:
+                    alpha[alpha < 255] = (
+                        0  # 强制将半透明改为透明,避免叠加出黑边
+                    )
+                    out_frame = cv2.merge([
+                        out_frame[:, :, 2],
+                        out_frame[:, :, 1],
+                        out_frame[:, :, 0],
+                        alpha,
+                    ])
                 audio_data = audio_samples[ni*audio_chunk_size:(ni+1) *audio_chunk_size]
                 audio_data = audio_data.numpy()
                 if len(audio_data) < audio_chunk_size:

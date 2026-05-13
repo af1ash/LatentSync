@@ -672,9 +672,9 @@ class LipsyncPipeline(DiffusionPipeline):
                         0  # 强制将半透明改为透明,避免叠加出黑边
                     )
                     out_frame = cv2.merge([
-                        out_frame[:, :, 2],
-                        out_frame[:, :, 1],
                         out_frame[:, :, 0],
+                        out_frame[:, :, 1],
+                        out_frame[:, :, 2],
                         alpha,
                     ])
                 audio_data = audio_samples[ni*audio_chunk_size:(ni+1) *audio_chunk_size]

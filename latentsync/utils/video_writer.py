@@ -8,6 +8,7 @@ Desc: 视频编码及推流
 
 import av
 import numpy as np
+from pathlib import Path
 
 from fractions import Fraction
 
@@ -252,6 +253,11 @@ class VideoReader:
     def __init__(self, input_videoname):
         self.input_videoname = input_videoname
         self.container = av.open(self.input_videoname)
+        suffix = Path(self.input_videoname).suffix
+        if suffix == '.mov':
+            self.vformat = 'rgba'
+        else:
+            self.vformat = 'rgb24'
         self.audio_stream = None
         self.video_stream = None
         for stream in self.container.streams:
@@ -304,7 +310,7 @@ class VideoReader:
         if type_ == "video":
             read_stream = self.video_stream
             frame_kwargs= {
-                "format": format
+                "format": self.vformat
             }
         elif type_ == "audio":
             read_stream = self.audio_stream

@@ -14,11 +14,12 @@
 
 import argparse
 import os
+import re
 import tqdm
 from statistics import fmean
 from eval.syncnet import SyncNetEval
 from eval.syncnet_detect import SyncNetDetector
-from latentsync.utils.util import red_text
+from latentsync.utils.util import red_text, plot_loss_chart
 import torch
 
 
@@ -61,16 +62,36 @@ def main():
         syncnet_eval(syncnet, syncnet_detector, args.video_path, args.temp_dir)
     else:
         sync_conf_list = []
-        video_names = sorted([f for f in os.listdir(args.videos_dir) if f.endswith(".mp4")])
-        for video_name in tqdm.tqdm(video_names):
+        # video_names = [f for f in os.listdir(args.videos_dir) if f.endswith(".mp4")]
+        video_names = []
+        for f in os.listdir(args.videos_dir):
+            match = re.search(r'_(\d+)\.mp4', f)
+            if match:
+                global_step = int(match.group(1))
+                video_names.append(
+                    {
+                        "step": global_step,
+                        "filename": f
+                    }
+                )
+        video_names = sorted(video_names, key=lambda x: x["step"])
+        val_step_list = []
+        for video_info in tqdm.tqdm(video_names):
+            global_step = video_info["step"]
+            video_name = video_info["filename"]
             try:
                 _, conf = syncnet_eval(
                     syncnet, syncnet_detector, os.path.join(args.videos_dir, video_name), args.temp_dir
                 )
                 sync_conf_list.append(conf)
+                val_step_list.append(global_step)
             except Exception as e:
                 print(e)
         print(f"The average sync confidence is {fmean(sync_conf_list):.02f}")
+        plot_loss_chart(
+            os.path.join(args.videos_dir, "sync_conf_chart.png"), 
+            ("Sync confidence", val_step_list, sync_conf_list)
+        )
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ from eval.syncnet import SyncNetEval
 from eval.syncnet_detect import SyncNetDetector
 from eval.eval_sync_conf import syncnet_eval
 import lpips
+from torch.utils.tensorboard import SummaryWriter
 
 
 logger = get_logger(__name__)
@@ -71,6 +72,8 @@ def main(config):
     folder_name = "train" + datetime.datetime.now().strftime(f"-%Y_%m_%d-%H:%M:%S")
     output_dir = os.path.join(config.data.train_output_dir, folder_name)
 
+    summary_dir = os.path.join(output_dir, "summary")
+    writer = SummaryWriter(summary_dir)
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -85,6 +88,7 @@ def main(config):
         os.makedirs(f"{output_dir}/checkpoints", exist_ok=True)
         os.makedirs(f"{output_dir}/val_videos", exist_ok=True)
         os.makedirs(f"{output_dir}/sync_conf_results", exist_ok=True)
+        os.makedirs(f"{output_dir}/summary", exist_ok=True)
         shutil.copy(config.unet_config_path, output_dir)
         shutil.copy(config.data.syncnet_config_path, output_dir)
 
@@ -129,7 +133,7 @@ def main(config):
         device=device,
     )
     # TODO 一阶段训练结果, 在二阶段使用是导致无法开始
-    resume_global_step = 0
+    # resume_global_step = 0
 
     if config.model.add_audio_layer and config.run.use_syncnet:
         syncnet_config = OmegaConf.load(config.data.syncnet_config_path)
@@ -498,9 +502,13 @@ def main(config):
                         os.path.join(output_dir, f"sync_conf_results/sync_conf_chart-{global_step}.png"),
                         ("Sync confidence", val_step_list, sync_conf_list),
                     )
+                    writer.add_scalar('Sync confidence', conf, global_step)
 
-            logs = {"step_loss": loss.item(), "epoch": epoch}
+            logs = {"step_loss": loss.item(), "epoch": epoch, 
+                    "recon_loss": recon_loss.item(), "sync_loss": sync_loss.item(), 
+                    "lpips_loss": lpips_loss.item(), "trepa_loss": trepa_loss.item()}
             progress_bar.set_postfix(**logs)
+            writer.add_scalar('training loss', logs , global_step)
 
             if global_step >= config.run.max_train_steps:
                 break

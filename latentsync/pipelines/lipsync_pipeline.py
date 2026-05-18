@@ -251,21 +251,25 @@ class LipsyncPipeline(DiffusionPipeline):
         images = images.cpu().numpy()
         return images
 
-    def affine_transform_video(self, video_frames: np.ndarray):
+    def affine_transform_video(self, video_frames: np.ndarray, frame_num=None, stopat=None):
         faces = []
         boxes = []
         affine_matrices = []
-        print(f"Affine transforming {len(video_frames)} faces...")
-        for frame in tqdm.tqdm(video_frames):
+        org_video_frames = []
+        # print(f"Affine transforming {len(video_frames)} faces...")
+        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             if frame.shape[-1] == 4:
                 frame = frame[:, :, :3]
+            if stopat is not None and stopat > 0 and stopat == i:
+                break
             face, box, affine_matrix = self.image_processor.affine_transform(frame)
             faces.append(face)
             boxes.append(box)
             affine_matrices.append(affine_matrix)
+            org_video_frames.append(frame)
 
         faces = torch.stack(faces)
-        return faces, boxes, affine_matrices
+        return org_video_frames, faces, boxes, affine_matrices
 
     def restore_video(self, faces: torch.Tensor, video_frames: np.ndarray, boxes: list, affine_matrices: list):
         video_frames = video_frames[: len(faces)]
@@ -285,7 +289,7 @@ class LipsyncPipeline(DiffusionPipeline):
     def loop_video(self, whisper_chunks: list, video_frames: np.ndarray):
         # If the audio is longer than the video, we need to loop the video
         if len(whisper_chunks) > len(video_frames):
-            faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
+            _, faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
             num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
             loop_video_frames = []
             loop_faces = []
@@ -309,7 +313,39 @@ class LipsyncPipeline(DiffusionPipeline):
             affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
         else:
             video_frames = video_frames[: len(whisper_chunks)]
-            faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
+            _, faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
+
+        return video_frames, faces, boxes, affine_matrices
+
+    def loop_video1(self, whisper_chunks: list, video_frames_gen: np.ndarray, frame_num=None):
+        # If the audio is longer than the video, we need to loop the video
+        print(f"{len(whisper_chunks)=},{frame_num=}")
+        if len(whisper_chunks) > frame_num:
+            video_frames, faces, boxes, affine_matrices = self.affine_transform_video(video_frames_gen, frame_num=frame_num)
+            num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
+            loop_video_frames = []
+            loop_faces = []
+            loop_boxes = []
+            loop_affine_matrices = []
+            for i in range(num_loops):
+                if i % 2 == 0:
+                    loop_video_frames.append(video_frames)
+                    loop_faces.append(faces)
+                    loop_boxes += boxes
+                    loop_affine_matrices += affine_matrices
+                else:
+                    loop_video_frames.append(video_frames[::-1])
+                    loop_faces.append(faces.flip(0))
+                    loop_boxes += boxes[::-1]
+                    loop_affine_matrices += affine_matrices[::-1]
+
+            video_frames = np.concatenate(loop_video_frames, axis=0)[: len(whisper_chunks)]
+            faces = torch.cat(loop_faces, dim=0)[: len(whisper_chunks)]
+            boxes = loop_boxes[: len(whisper_chunks)]
+            affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
+        else:
+            # video_frames = video_frames[: len(whisper_chunks)]
+            video_frames, faces, boxes, affine_matrices = self.affine_transform_video(video_frames_gen, frame_num=frame_num, stopat=len(whisper_chunks))
 
         return video_frames, faces, boxes, affine_matrices
 
@@ -546,9 +582,8 @@ class LipsyncPipeline(DiffusionPipeline):
         audio_samples = read_audio(audio_path)
         # video_frames = read_video(video_path, use_decord=False)
         with VideoReader(video_path) as vr:
-            video_frames = vr.read()
-
-        video_frames, faces, boxes, affine_matrices = self.loop_video(whisper_chunks, video_frames)
+            video_frame_generater = vr.read_iter()
+            video_frames, faces, boxes, affine_matrices = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
 
         synced_video_frames = []
 
@@ -668,9 +703,6 @@ class LipsyncPipeline(DiffusionPipeline):
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrices[ni])
 
                 if alpha is not None:
-                    alpha[alpha < 255] = (
-                        0  # 强制将半透明改为透明,避免叠加出黑边
-                    )
                     out_frame = cv2.merge([
                         out_frame[:, :, 0],
                         out_frame[:, :, 1],

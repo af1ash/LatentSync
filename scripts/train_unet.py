@@ -508,7 +508,7 @@ def main(config):
                     "recon_loss": recon_loss.item(), "sync_loss": sync_loss.item(), 
                     "lpips_loss": lpips_loss.item(), "trepa_loss": trepa_loss.item()}
             progress_bar.set_postfix(**logs)
-            writer.add_scalar('training loss', logs , global_step)
+            writer.add_scalars('training loss', logs , global_step)
 
             if global_step >= config.run.max_train_steps:
                 break

@@ -227,7 +227,8 @@ def main(config):
     pipeline.set_progress_bar_config(disable=True)
 
     # DDP warpper
-    unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
+    # TODO 暂时关闭掉分布式训练
+    # unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader))
@@ -459,7 +460,8 @@ def main(config):
                 model_save_path = os.path.join(output_dir, f"checkpoints/checkpoint-{global_step}.pt")
                 state_dict = {
                     "global_step": global_step,
-                    "state_dict": unet.module.state_dict(),
+                    # "state_dict": unet.module.state_dict(),
+                    "state_dict": unet.state_dict(),
                 }
                 try:
                     torch.save(state_dict, model_save_path)

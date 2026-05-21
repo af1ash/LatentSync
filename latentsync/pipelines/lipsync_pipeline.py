@@ -2,6 +2,7 @@
 
 import inspect
 import math
+import time
 import os
 from pathlib import Path
 import shutil
@@ -40,6 +41,40 @@ import tqdm
 import soundfile as sf
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+class OneEuroFiler:
+
+    def __init__(self, t0, x0, min_cutoff=1.0, beta=0.0, d_cutoff=1.0):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
+        self.x_prev = np.array(x0, dtype=np.float32)
+        self.dx_prev = np.zeros_like(self.x_prev, dtype=np.float32)
+        self.t_prev = t0
+    
+    def smoothing_factor(self, t_e, cutoff):
+        r = 2 * math.pi * cutoff * t_e
+        return r / (r + 1)
+    def exponential_smoothing(self, a, x, x_prev):
+        return a * x + (1 - a) * x_prev
+    
+    def __call__(self, t, x):
+        t_e = t - self.t_prev
+
+        d_cutoff = self.d_cutoff
+        alpha_d = self.smoothing_factor(t_e, d_cutoff)
+
+        dx = (np.array(x, dtype=np.float32) - self.x_prev) / t_e
+
+        dx_hat = self.exponential_smoothing(alpha_d, dx, self.dx_prev)
+        cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
+        alpha = self.smoothing_factor(t_e, cutoff)
+        x_hat = self.exponential_smoothing(alpha, x, self.x_prev)
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        self.t_prev = t
+        return x_hat
 
 
 class LipsyncPipeline(DiffusionPipeline):
@@ -316,12 +351,62 @@ class LipsyncPipeline(DiffusionPipeline):
             _, faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
 
         return video_frames, faces, boxes, affine_matrices
+    
+    def affine_transform_video1(self, video_frames: np.ndarray, frame_num=None, stopat=None):
+        faces = []
+        boxes = []
+        affine_matrices = []
+        org_video_frames = []
+        filters = {}
+        # print(f"Affine transforming {len(video_frames)} faces...")
+        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
+            if frame.shape[-1] == 4:
+                frame = frame[:, :, :3]
+            if stopat is not None and stopat > 0 and stopat == i:
+                break
+
+            # face, box, affine_matrix = self.image_processor.affine_transform(frame)
+            image = frame
+            bbox, landmark_2d_106 = self.image_processor.face_detector(image)
+            if bbox is None:
+                raise RuntimeError("Face not detected")
+          
+            current_time = time.time()
+            smoothed_landmarks = np.zeros_like(landmark_2d_106)
+            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.0001, beta=0.01)
+                    # filters.append(curfilter)
+                    filters[j] = curfilter
+                    smoothed_landmarks[j] = landmark_2d_106[j]
+                else:
+                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
+            landmark_2d_106 = smoothed_landmarks
+            # landmarks_list.append(landmark_2d_106)
+            # landmark_2d_106 = smoother.smooth(landmark_2d_106)
+            org_video_frames.append(frame)
+            pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+            pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
+            pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+            landmarks3 = np.round([pt_left_eye, pt_right_eye, pt_nose])
+
+            face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
+            box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
+            face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
+            face = rearrange(torch.from_numpy(face), "h w c -> c h w")
+            faces.append(face)
+            boxes.append(box)
+            affine_matrices.append(affine_matrix)
+
+        faces = torch.stack(faces)
+       
+        return org_video_frames, faces, boxes, affine_matrices
 
     def loop_video1(self, whisper_chunks: list, video_frames_gen: np.ndarray, frame_num=None):
         # If the audio is longer than the video, we need to loop the video
         print(f"{len(whisper_chunks)=},{frame_num=}")
         if len(whisper_chunks) > frame_num:
-            video_frames, faces, boxes, affine_matrices = self.affine_transform_video(video_frames_gen, frame_num=frame_num)
+            video_frames, faces, boxes, affine_matrices = self.affine_transform_video1(video_frames_gen, frame_num=frame_num)
             num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
             loop_video_frames = []
             loop_faces = []
@@ -345,7 +430,7 @@ class LipsyncPipeline(DiffusionPipeline):
             affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
         else:
             # video_frames = video_frames[: len(whisper_chunks)]
-            video_frames, faces, boxes, affine_matrices = self.affine_transform_video(video_frames_gen, frame_num=frame_num, stopat=len(whisper_chunks))
+            video_frames, faces, boxes, affine_matrices = self.affine_transform_video1(video_frames_gen, frame_num=frame_num, stopat=len(whisper_chunks))
 
         return video_frames, faces, boxes, affine_matrices
 

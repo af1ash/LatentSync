@@ -39,6 +39,7 @@ from ..whisper.audio2feature import Audio2Feature
 from ..utils.video_writer import VideoWriter, VideoReader
 import tqdm
 import soundfile as sf
+import matplotlib.pyplot as plt
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -358,6 +359,10 @@ class LipsyncPipeline(DiffusionPipeline):
         affine_matrices = []
         org_video_frames = []
         filters = {}
+        filters3 = {}
+        landmarks_list = []
+        landmarks3_list = []
+        # org_landmarks = []
         # print(f"Affine transforming {len(video_frames)} faces...")
         for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             if frame.shape[-1] == 4:
@@ -372,24 +377,35 @@ class LipsyncPipeline(DiffusionPipeline):
                 raise RuntimeError("Face not detected")
           
             current_time = time.time()
+            # org_landmarks.append(landmark_2d_106)
             smoothed_landmarks = np.zeros_like(landmark_2d_106)
             for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
                 if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.0001, beta=0.01)
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.01)
                     # filters.append(curfilter)
                     filters[j] = curfilter
                     smoothed_landmarks[j] = landmark_2d_106[j]
                 else:
                     smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
             landmark_2d_106 = smoothed_landmarks
-            # landmarks_list.append(landmark_2d_106)
+            landmarks_list.append(landmark_2d_106)
             # landmark_2d_106 = smoother.smooth(landmark_2d_106)
             org_video_frames.append(frame)
             pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
             pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
             pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
             landmarks3 = np.round([pt_left_eye, pt_right_eye, pt_nose])
-
+            smoothed_landmarks = np.zeros_like(landmarks3)
+            for j in range(3):
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.001, beta=0.01)
+                    # filters.append(curfilter)
+                    filters3[j] = curfilter
+                    smoothed_landmarks[j] = landmarks3[j]
+                else:
+                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
+            landmarks3 = smoothed_landmarks
+            landmarks3_list.append(landmarks3)
             face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
             box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
             face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
@@ -397,6 +413,9 @@ class LipsyncPipeline(DiffusionPipeline):
             faces.append(face)
             boxes.append(box)
             affine_matrices.append(affine_matrix)
+        
+        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth.png")
 
         faces = torch.stack(faces)
        
@@ -433,6 +452,41 @@ class LipsyncPipeline(DiffusionPipeline):
             video_frames, faces, boxes, affine_matrices = self.affine_transform_video1(video_frames_gen, frame_num=frame_num, stopat=len(whisper_chunks))
 
         return video_frames, faces, boxes, affine_matrices
+
+    def plot_image(self, x, y, indexs, filename):
+
+        landmarks_list = np.array(y)
+        plt.figure(figsize=(22,14))
+        pnum = len(indexs)
+        for i, pi in enumerate(indexs):
+            plt.subplot(pnum,2,i*2+1)
+            plt.plot(x, landmarks_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
+            plt.xlabel("帧序号")
+            plt.ylabel("x")
+            plt.title(pi)
+            plt.subplot(pnum,2,i*2+2)
+            plt.plot(x, landmarks_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
+            plt.xlabel("帧序号")
+            plt.ylabel("y")
+            plt.title(pi)
+        plt.savefig(filename)
+
+        # landmarks3_list = np.array(landmarks3_list)
+        # plt.figure(figsize=(22,14))
+        # for pi in range(3):
+        #     plt.subplot(3,2,pi*2+1)
+        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
+        #     plt.xlabel("帧序号")
+        #     plt.ylabel("x")
+        #     plt.title(pi)
+        #     plt.subplot(3,2,pi*2+2)
+        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
+        #     plt.xlabel("帧序号")
+        #     plt.ylabel("y")
+        #     plt.title(pi)
+        # plt.savefig("filter_3p_smooth_01_both.png")
+        pass
+
 
     @torch.no_grad()
     def __call__(

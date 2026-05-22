@@ -40,6 +40,8 @@ from ..utils.video_writer import VideoWriter, VideoReader
 import tqdm
 import soundfile as sf
 import matplotlib.pyplot as plt
+from ..gfpgan.utils import img2tensor, tensor2img
+from torchvision.transforms.functional import normalize
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -94,6 +96,7 @@ class LipsyncPipeline(DiffusionPipeline):
             EulerAncestralDiscreteScheduler,
             DPMSolverMultistepScheduler,
         ],
+        gfpgan=None
     ):
         super().__init__()
 
@@ -155,6 +158,7 @@ class LipsyncPipeline(DiffusionPipeline):
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
 
         self.set_progress_bar_config(desc="Steps")
+        self.gfpgan = gfpgan
 
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
@@ -363,6 +367,7 @@ class LipsyncPipeline(DiffusionPipeline):
         landmarks_list = []
         landmarks3_list = []
         org_landmarks = []
+        fbboxs = []
         # print(f"Affine transforming {len(video_frames)} faces...")
         for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             if frame.shape[-1] == 4:
@@ -375,6 +380,7 @@ class LipsyncPipeline(DiffusionPipeline):
             bbox, landmark_2d_106 = self.image_processor.face_detector(image)
             if bbox is None:
                 raise RuntimeError("Face not detected")
+            fbboxs.append(bbox)
           
             current_time = time.time()
             # org_landmarks.append(landmark_2d_106)
@@ -420,39 +426,43 @@ class LipsyncPipeline(DiffusionPipeline):
 
         faces = torch.stack(faces)
        
-        return org_video_frames, faces, boxes, affine_matrices
+        return org_video_frames, faces, boxes, affine_matrices, fbboxs
 
     def loop_video1(self, whisper_chunks: list, video_frames_gen: np.ndarray, frame_num=None):
         # If the audio is longer than the video, we need to loop the video
         print(f"{len(whisper_chunks)=},{frame_num=}")
         if len(whisper_chunks) > frame_num:
-            video_frames, faces, boxes, affine_matrices = self.affine_transform_video1(video_frames_gen, frame_num=frame_num)
+            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=frame_num)
             num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
             loop_video_frames = []
             loop_faces = []
             loop_boxes = []
+            loop_fbboxes = []
             loop_affine_matrices = []
             for i in range(num_loops):
                 if i % 2 == 0:
                     loop_video_frames.append(video_frames)
                     loop_faces.append(faces)
                     loop_boxes += boxes
+                    loop_fbboxes += fbboxs
                     loop_affine_matrices += affine_matrices
                 else:
                     loop_video_frames.append(video_frames[::-1])
                     loop_faces.append(faces.flip(0))
                     loop_boxes += boxes[::-1]
+                    loop_fbboxes += fbboxs[::-1]
                     loop_affine_matrices += affine_matrices[::-1]
 
             video_frames = np.concatenate(loop_video_frames, axis=0)[: len(whisper_chunks)]
             faces = torch.cat(loop_faces, dim=0)[: len(whisper_chunks)]
             boxes = loop_boxes[: len(whisper_chunks)]
+            fbboxs = loop_fbboxes[: len(whisper_chunks)]
             affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
         else:
             # video_frames = video_frames[: len(whisper_chunks)]
-            video_frames, faces, boxes, affine_matrices = self.affine_transform_video1(video_frames_gen, frame_num=frame_num, stopat=len(whisper_chunks))
+            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=len(whisper_chunks), stopat=len(whisper_chunks))
 
-        return video_frames, faces, boxes, affine_matrices
+        return video_frames, faces, boxes, affine_matrices, fbboxs
 
     def plot_image(self, x, y, indexs, filename):
 
@@ -663,6 +673,34 @@ class LipsyncPipeline(DiffusionPipeline):
         del whisper_feature
         del whisper_chunks
 
+    def face_enhance(self, res_frame, face_restore_visibility=0.5):
+        assert self.gfpgan, f"{self.gfpgan=}"
+        height, width, _ = res_frame.shape
+        res_frame = cv2.resize(
+                            res_frame.astype(np.uint8), (512, 512)
+                        )
+        cropped_face_t = img2tensor(
+            res_frame / 255.0, bgr2rgb=True, float32=True
+        )
+        normalize(
+            cropped_face_t,
+            (0.5, 0.5, 0.5),
+            (0.5, 0.5, 0.5),
+            inplace=True,
+        )
+        cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
+        output = self.gfpgan(cropped_face_t)[0]
+        cropped_face = tensor2img(
+            output, rgb2bgr=True, min_max=(-1, 1)
+        )
+        res_frame = (
+            res_frame * (1 - face_restore_visibility)
+            + cropped_face * face_restore_visibility
+        )
+        res_frame = cv2.resize(
+                    res_frame.astype(np.uint8), (width, height)
+                )
+        return res_frame
 
     @torch.no_grad()
     def stream(
@@ -723,7 +761,7 @@ class LipsyncPipeline(DiffusionPipeline):
         # video_frames = read_video(video_path, use_decord=False)
         with VideoReader(video_path) as vr:
             video_frame_generater = vr.read_iter()
-            video_frames, faces, boxes, affine_matrices = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
+            video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
 
         synced_video_frames = []
 
@@ -845,6 +883,12 @@ class LipsyncPipeline(DiffusionPipeline):
                 else:
                     oframe = org_frame
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrices[ni])
+
+                if self.gfpgan:
+                    fbbox = fbboxs[ni]
+                    x1, y1, x2, y2 = fbbox
+                    gan_face = self.face_enhance(out_frame[y1:y2, x1:x2].copy())
+                    out_frame[y1:y2, x1:x2] = gan_face
 
                 if alpha is not None:
                     out_frame = cv2.merge([

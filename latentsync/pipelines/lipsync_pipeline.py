@@ -357,148 +357,6 @@ class LipsyncPipeline(DiffusionPipeline):
 
         return video_frames, faces, boxes, affine_matrices
     
-    def affine_transform_video1(self, video_frames: np.ndarray, frame_num=None, stopat=None):
-        faces = []
-        boxes = []
-        affine_matrices = []
-        org_video_frames = []
-        filters = {}
-        filters3 = {}
-        landmarks_list = []
-        landmarks3_list = []
-        org_landmarks = []
-        fbboxs = []
-        # print(f"Affine transforming {len(video_frames)} faces...")
-        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
-            if frame.shape[-1] == 4:
-                frame = frame[:, :, :3]
-            if stopat is not None and stopat > 0 and stopat == i:
-                break
-
-            # face, box, affine_matrix = self.image_processor.affine_transform(frame)
-            image = frame
-            bbox, landmark_2d_106 = self.image_processor.face_detector(image)
-            if bbox is None:
-                raise RuntimeError("Face not detected")
-            fbboxs.append(bbox)
-          
-            current_time = time.time()
-            # org_landmarks.append(landmark_2d_106)
-            smoothed_landmarks = np.zeros_like(landmark_2d_106)
-            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
-                if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.5)
-                    # filters.append(curfilter)
-                    filters[j] = curfilter
-                    smoothed_landmarks[j] = landmark_2d_106[j]
-                else:
-                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
-            landmark_2d_106 = smoothed_landmarks
-            landmarks_list.append(landmark_2d_106)
-            # landmark_2d_106 = smoother.smooth(landmark_2d_106)
-            org_video_frames.append(frame)
-            pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
-            pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
-            pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
-            landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
-            smoothed_landmarks = np.zeros_like(landmarks3)
-            for j in range(3):
-                if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
-                    # filters.append(curfilter)
-                    filters3[j] = curfilter
-                    smoothed_landmarks[j] = landmarks3[j]
-                else:
-                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
-            landmarks3 = smoothed_landmarks
-            landmarks3_list.append(landmarks3)
-            face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
-            box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
-            face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
-            face = rearrange(torch.from_numpy(face), "h w c -> c h w")
-            faces.append(face)
-            boxes.append(box)
-            affine_matrices.append(affine_matrix)
-        
-        # self.plot_image(range(len(org_video_frames)), org_landmarks, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
-        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12.png")
-        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12.png")
-
-        faces = torch.stack(faces)
-       
-        return org_video_frames, faces, boxes, affine_matrices, fbboxs
-
-    def loop_video1(self, whisper_chunks: list, video_frames_gen: np.ndarray, frame_num=None):
-        # If the audio is longer than the video, we need to loop the video
-        print(f"{len(whisper_chunks)=},{frame_num=}")
-        if len(whisper_chunks) > frame_num:
-            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=frame_num)
-            num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
-            loop_video_frames = []
-            loop_faces = []
-            loop_boxes = []
-            loop_fbboxes = []
-            loop_affine_matrices = []
-            for i in range(num_loops):
-                if i % 2 == 0:
-                    loop_video_frames.append(video_frames)
-                    loop_faces.append(faces)
-                    loop_boxes += boxes
-                    loop_fbboxes += fbboxs
-                    loop_affine_matrices += affine_matrices
-                else:
-                    loop_video_frames.append(video_frames[::-1])
-                    loop_faces.append(faces.flip(0))
-                    loop_boxes += boxes[::-1]
-                    loop_fbboxes += fbboxs[::-1]
-                    loop_affine_matrices += affine_matrices[::-1]
-
-            video_frames = np.concatenate(loop_video_frames, axis=0)[: len(whisper_chunks)]
-            faces = torch.cat(loop_faces, dim=0)[: len(whisper_chunks)]
-            boxes = loop_boxes[: len(whisper_chunks)]
-            fbboxs = loop_fbboxes[: len(whisper_chunks)]
-            affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
-        else:
-            # video_frames = video_frames[: len(whisper_chunks)]
-            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=len(whisper_chunks), stopat=len(whisper_chunks))
-
-        return video_frames, faces, boxes, affine_matrices, fbboxs
-
-    def plot_image(self, x, y, indexs, filename):
-
-        landmarks_list = np.array(y)
-        plt.figure(figsize=(22,14))
-        pnum = len(indexs)
-        for i, pi in enumerate(indexs):
-            plt.subplot(pnum,2,i*2+1)
-            plt.plot(x, landmarks_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
-            plt.xlabel("帧序号")
-            plt.ylabel("x")
-            plt.title(pi)
-            plt.subplot(pnum,2,i*2+2)
-            plt.plot(x, landmarks_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
-            plt.xlabel("帧序号")
-            plt.ylabel("y")
-            plt.title(pi)
-        plt.savefig(filename)
-
-        # landmarks3_list = np.array(landmarks3_list)
-        # plt.figure(figsize=(22,14))
-        # for pi in range(3):
-        #     plt.subplot(3,2,pi*2+1)
-        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
-        #     plt.xlabel("帧序号")
-        #     plt.ylabel("x")
-        #     plt.title(pi)
-        #     plt.subplot(3,2,pi*2+2)
-        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
-        #     plt.xlabel("帧序号")
-        #     plt.ylabel("y")
-        #     plt.title(pi)
-        # plt.savefig("filter_3p_smooth_01_both.png")
-        pass
-
-
     @torch.no_grad()
     def __call__(
         self,
@@ -701,6 +559,147 @@ class LipsyncPipeline(DiffusionPipeline):
                     res_frame.astype(np.uint8), (width, height)
                 )
         return res_frame
+
+    def affine_transform_video1(self, video_frames: np.ndarray, frame_num=None, stopat=None):
+        faces = []
+        boxes = []
+        affine_matrices = []
+        org_video_frames = []
+        filters = {}
+        filters3 = {}
+        landmarks_list = []
+        landmarks3_list = []
+        org_landmarks = []
+        fbboxs = []
+        # print(f"Affine transforming {len(video_frames)} faces...")
+        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
+            if frame.shape[-1] == 4:
+                frame = frame[:, :, :3]
+            if stopat is not None and stopat > 0 and stopat == i:
+                break
+
+            # face, box, affine_matrix = self.image_processor.affine_transform(frame)
+            image = frame
+            bbox, landmark_2d_106 = self.image_processor.face_detector(image)
+            if bbox is None:
+                raise RuntimeError("Face not detected")
+            fbboxs.append(bbox)
+          
+            current_time = time.time()
+            # org_landmarks.append(landmark_2d_106)
+            smoothed_landmarks = np.zeros_like(landmark_2d_106)
+            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.5)
+                    # filters.append(curfilter)
+                    filters[j] = curfilter
+                    smoothed_landmarks[j] = landmark_2d_106[j]
+                else:
+                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
+            landmark_2d_106 = smoothed_landmarks
+            landmarks_list.append(landmark_2d_106)
+            # landmark_2d_106 = smoother.smooth(landmark_2d_106)
+            org_video_frames.append(frame)
+            pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+            pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
+            pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+            landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
+            smoothed_landmarks = np.zeros_like(landmarks3)
+            for j in range(3):
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
+                    # filters.append(curfilter)
+                    filters3[j] = curfilter
+                    smoothed_landmarks[j] = landmarks3[j]
+                else:
+                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
+            landmarks3 = smoothed_landmarks
+            landmarks3_list.append(landmarks3)
+            face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
+            box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
+            face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
+            face = rearrange(torch.from_numpy(face), "h w c -> c h w")
+            faces.append(face)
+            boxes.append(box)
+            affine_matrices.append(affine_matrix)
+        
+        # self.plot_image(range(len(org_video_frames)), org_landmarks, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12.png")
+
+        faces = torch.stack(faces)
+       
+        return org_video_frames, faces, boxes, affine_matrices, fbboxs
+
+    def loop_video1(self, whisper_chunks: list, video_frames_gen: np.ndarray, frame_num=None):
+        # If the audio is longer than the video, we need to loop the video
+        print(f"{len(whisper_chunks)=},{frame_num=}")
+        if len(whisper_chunks) > frame_num:
+            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=frame_num)
+            num_loops = math.ceil(len(whisper_chunks) / len(video_frames))
+            loop_video_frames = []
+            loop_faces = []
+            loop_boxes = []
+            loop_fbboxes = []
+            loop_affine_matrices = []
+            for i in range(num_loops):
+                if i % 2 == 0:
+                    loop_video_frames.append(video_frames)
+                    loop_faces.append(faces)
+                    loop_boxes += boxes
+                    loop_fbboxes += fbboxs
+                    loop_affine_matrices += affine_matrices
+                else:
+                    loop_video_frames.append(video_frames[::-1])
+                    loop_faces.append(faces.flip(0))
+                    loop_boxes += boxes[::-1]
+                    loop_fbboxes += fbboxs[::-1]
+                    loop_affine_matrices += affine_matrices[::-1]
+
+            video_frames = np.concatenate(loop_video_frames, axis=0)[: len(whisper_chunks)]
+            faces = torch.cat(loop_faces, dim=0)[: len(whisper_chunks)]
+            boxes = loop_boxes[: len(whisper_chunks)]
+            fbboxs = loop_fbboxes[: len(whisper_chunks)]
+            affine_matrices = loop_affine_matrices[: len(whisper_chunks)]
+        else:
+            # video_frames = video_frames[: len(whisper_chunks)]
+            video_frames, faces, boxes, affine_matrices, fbboxs = self.affine_transform_video1(video_frames_gen, frame_num=len(whisper_chunks), stopat=len(whisper_chunks))
+
+        return video_frames, faces, boxes, affine_matrices, fbboxs
+
+    def plot_image(self, x, y, indexs, filename):
+
+        landmarks_list = np.array(y)
+        plt.figure(figsize=(22,14))
+        pnum = len(indexs)
+        for i, pi in enumerate(indexs):
+            plt.subplot(pnum,2,i*2+1)
+            plt.plot(x, landmarks_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
+            plt.xlabel("帧序号")
+            plt.ylabel("x")
+            plt.title(pi)
+            plt.subplot(pnum,2,i*2+2)
+            plt.plot(x, landmarks_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
+            plt.xlabel("帧序号")
+            plt.ylabel("y")
+            plt.title(pi)
+        plt.savefig(filename)
+
+        # landmarks3_list = np.array(landmarks3_list)
+        # plt.figure(figsize=(22,14))
+        # for pi in range(3):
+        #     plt.subplot(3,2,pi*2+1)
+        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,0], marker='.', linestyle='-', linewidth=1, markersize=2)
+        #     plt.xlabel("帧序号")
+        #     plt.ylabel("x")
+        #     plt.title(pi)
+        #     plt.subplot(3,2,pi*2+2)
+        #     plt.plot(range(len(org_video_frames)), landmarks3_list[:,pi,1], marker='.', linestyle='-', linewidth=1, markersize=2, color='orange')
+        #     plt.xlabel("帧序号")
+        #     plt.ylabel("y")
+        #     plt.title(pi)
+        # plt.savefig("filter_3p_smooth_01_both.png")
+        pass
 
     @torch.no_grad()
     def stream(

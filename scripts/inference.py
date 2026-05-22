@@ -55,6 +55,7 @@ def main(config, args):
     )
 
     vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=dtype, local_files_only=True)
+    # vae = AutoencoderKL.from_pretrained("checkpoints/zkzou/sd-vae-ft-L1", torch_dtype=dtype, local_files_only=True)
     vae.config.scaling_factor = 0.18215
     vae.config.shift_factor = 0
 

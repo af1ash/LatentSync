@@ -362,7 +362,7 @@ class LipsyncPipeline(DiffusionPipeline):
         filters3 = {}
         landmarks_list = []
         landmarks3_list = []
-        # org_landmarks = []
+        org_landmarks = []
         # print(f"Affine transforming {len(video_frames)} faces...")
         for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             if frame.shape[-1] == 4:
@@ -381,7 +381,7 @@ class LipsyncPipeline(DiffusionPipeline):
             smoothed_landmarks = np.zeros_like(landmark_2d_106)
             for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
                 if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.01)
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.5)
                     # filters.append(curfilter)
                     filters[j] = curfilter
                     smoothed_landmarks[j] = landmark_2d_106[j]
@@ -394,11 +394,11 @@ class LipsyncPipeline(DiffusionPipeline):
             pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
             pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
             pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
-            landmarks3 = np.round([pt_left_eye, pt_right_eye, pt_nose])
+            landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
             smoothed_landmarks = np.zeros_like(landmarks3)
             for j in range(3):
                 if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.001, beta=0.01)
+                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
                     # filters.append(curfilter)
                     filters3[j] = curfilter
                     smoothed_landmarks[j] = landmarks3[j]
@@ -414,8 +414,9 @@ class LipsyncPipeline(DiffusionPipeline):
             boxes.append(box)
             affine_matrices.append(affine_matrix)
         
-        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
-        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth.png")
+        # self.plot_image(range(len(org_video_frames)), org_landmarks, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12.png")
 
         faces = torch.stack(faces)
        
@@ -820,12 +821,16 @@ class LipsyncPipeline(DiffusionPipeline):
             )
             # synced_video_frames.append(decoded_latents)
             alpha = None 
+            # decoded_latents = inference_faces
             for index, new_face in enumerate(decoded_latents):
                 ni = i * num_frames + index
                 # restore face
                 x1, y1, x2, y2 = boxes[ni]
                 org_height = int(y2 - y1)
                 org_width = int(x2 - x1)
+                # nor_face = new_face.cpu().numpy().astype(np.float16)
+                # nor_face = nor_face / 127.5 - 1.0
+                # new_face = torch.from_numpy(nor_face).to(self.device)
                 face = torchvision.transforms.functional.resize(
                     new_face, size=(org_height, org_width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
                 )

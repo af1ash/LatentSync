@@ -66,7 +66,7 @@ class FaceDetector:
             x2 = min(f_w, x2)
             y2 = min(f_h, y2)
 
-            return (x1, y1, x2, y2), lmk
+            return (x1, y1, x2, y2), face.landmark_2d_106
 
 
 def cuda_to_int(cuda_str: str) -> int:

@@ -69,11 +69,12 @@ def main(config, args):
     unet = unet.to(dtype=dtype)
     device = "cuda"
     fr_model_path = f"checkpoints/gfpgan/GFPGANv1.3.pth"
-    sd = torch.load(
-                fr_model_path, map_location=device, weights_only=True
-            )
-    gfpgan = model_loading.load_state_dict(sd).eval()
-    gfpgan.to(device)
+    # sd = torch.load(
+    #             fr_model_path, map_location=device, weights_only=True
+    #         )
+    # gfpgan = model_loading.load_state_dict(sd).eval()
+    # gfpgan.to(device)
+    gfpgan = None
     pipeline = LipsyncPipeline(
         vae=vae,
         audio_encoder=audio_encoder,

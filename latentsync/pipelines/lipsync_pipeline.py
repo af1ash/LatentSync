@@ -575,6 +575,14 @@ class LipsyncPipeline(DiffusionPipeline):
         for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             if frame.shape[-1] == 4:
                 frame = frame[:, :, :3]
+                # alpha = frame[:, :, 3]
+                # bg_r, bg_g, bg_b = 0, 255, 0
+                # alpha_normal = alpha.astype(float) / 255.0
+                # r_out = (frame[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+                # g_out = (frame[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+                # b_out = (frame[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+                # frame = np.stack([r_out, g_out, b_out], axis=-1)
+                # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
             if stopat is not None and stopat > 0 and stopat == i:
                 break
 
@@ -584,13 +592,13 @@ class LipsyncPipeline(DiffusionPipeline):
             if bbox is None:
                 raise RuntimeError("Face not detected")
             fbboxs.append(bbox)
-          
+            
             current_time = time.time()
-            # org_landmarks.append(landmark_2d_106)
+            org_landmarks.append(landmark_2d_106)
             smoothed_landmarks = np.zeros_like(landmark_2d_106)
             for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
                 if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.5)
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
                     # filters.append(curfilter)
                     filters[j] = curfilter
                     smoothed_landmarks[j] = landmark_2d_106[j]
@@ -624,8 +632,8 @@ class LipsyncPipeline(DiffusionPipeline):
             affine_matrices.append(affine_matrix)
         
         # self.plot_image(range(len(org_video_frames)), org_landmarks, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
-        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12.png")
-        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12_8.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12_8.png")
 
         faces = torch.stack(faces)
        
@@ -643,7 +651,8 @@ class LipsyncPipeline(DiffusionPipeline):
             loop_fbboxes = []
             loop_affine_matrices = []
             for i in range(num_loops):
-                if i % 2 == 0:
+                # if i % 2 == 0:
+                if True:
                     loop_video_frames.append(video_frames)
                     loop_faces.append(faces)
                     loop_boxes += boxes

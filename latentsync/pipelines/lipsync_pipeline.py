@@ -710,6 +710,177 @@ class LipsyncPipeline(DiffusionPipeline):
         # plt.savefig("filter_3p_smooth_01_both.png")
         pass
 
+    def affine_transform_video2(self, video_frames: np.ndarray, frame_num=None, stopat=None):
+        faces = []
+        boxes = []
+        affine_matrices = []
+        org_video_frames = []
+        filters = {}
+        filters3 = {}
+        landmarks_list = []
+        landmarks3_list = []
+        org_landmarks = []
+        fbboxs = []
+        frames_data = []
+        # print(f"Affine transforming {len(video_frames)} faces...")
+        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
+            frame_item = {}
+            if frame.shape[-1] == 4:
+                frame = frame[:, :, :3]
+                # alpha = frame[:, :, 3]
+                # bg_r, bg_g, bg_b = 0, 255, 0
+                # alpha_normal = alpha.astype(float) / 255.0
+                # r_out = (frame[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+                # g_out = (frame[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+                # b_out = (frame[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+                # frame = np.stack([r_out, g_out, b_out], axis=-1)
+                # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
+            if stopat is not None and stopat > 0 and stopat == i:
+                break
+
+            # face, box, affine_matrix = self.image_processor.affine_transform(frame)
+            image = frame
+            bbox, landmark_2d_106 = self.image_processor.face_detector(image)
+            if bbox is None:
+                raise RuntimeError("Face not detected")
+            fbboxs.append(bbox)
+            
+            current_time = time.time()
+            org_landmarks.append(landmark_2d_106)
+            smoothed_landmarks = np.zeros_like(landmark_2d_106)
+            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
+                    # filters.append(curfilter)
+                    filters[j] = curfilter
+                    smoothed_landmarks[j] = landmark_2d_106[j]
+                else:
+                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
+            landmark_2d_106 = smoothed_landmarks
+            landmarks_list.append(landmark_2d_106)
+            # landmark_2d_106 = smoother.smooth(landmark_2d_106)
+            org_video_frames.append(frame)
+            pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+            pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
+            pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+            landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
+            smoothed_landmarks = np.zeros_like(landmarks3)
+            for j in range(3):
+                if i == 0:
+                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
+                    # filters.append(curfilter)
+                    filters3[j] = curfilter
+                    smoothed_landmarks[j] = landmarks3[j]
+                else:
+                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
+            landmarks3 = smoothed_landmarks
+            landmarks3_list.append(landmarks3)
+            face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
+            box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
+            face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
+            face = rearrange(torch.from_numpy(face), "h w c -> c h w")
+            # faces.append(face)
+            # boxes.append(box)
+            # affine_matrices.append(affine_matrix)
+            frame_item["video"] = frame
+            frame_item["face"] = face
+            frame_item["boxes"] = box
+            frame_item["affine"] = affine_matrix
+            frame_item["fbbox"] = bbox
+            frames_data.append(frame_item)
+        
+        # self.plot_image(range(len(org_video_frames)), org_landmarks, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks_list, [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105], filename="org_f12_8.png")
+        # self.plot_image(range(len(org_video_frames)), landmarks3_list, list(range(3)), filename="smooth_f12_8.png")
+
+        # faces = torch.stack(faces)
+       
+        # return org_video_frames, faces, boxes, affine_matrices, fbboxs
+        return frames_data
+
+    def mirror_index(self, size, index):
+        turn = index // size
+        res = index % size
+        if turn % 2 == 0:
+            return res
+        else:
+            return size - res - 1
+
+    def get_frame_data_by_index(self, index, candidate_frames):
+        mi = self.mirror_index( len(candidate_frames), index)
+        return candidate_frames[mi]
+
+    def datagen_whisper_frames(
+        self,
+        inf_step,
+        audio_array,
+        whisper_chunks,
+        candidate_frames,
+        audio_batch_size,
+        audio_channel,
+        batch_size=8,
+    ):
+        whisper_batch = []
+        audio_batchs = []
+        face_batch = []
+        vframe_batch = []
+        gi = 0
+        for i in range(inf_step):
+
+            # whisper_batch.append(whisper_chunks[i])
+            whisper_batch = whisper_chunks[i*batch_size: (i+1)*batch_size]
+            # frame_batch.append(candidate_frame["video"])
+            batch_len = len(whisper_batch)
+
+            for j in range(batch_len):
+                candidate_frame = self.get_frame_data_by_index(gi, candidate_frames)
+                face_batch.append(candidate_frame["face"])
+                # alpha_img = candidate_frame["alpha_img"]
+                # if alpha_img is not None:
+                #     alpha_batch.append(alpha_img)
+                vframe_batch.append(candidate_frame)
+
+                audio_batch = audio_array[
+                    gi * audio_batch_size : (gi + 1)
+                    * audio_batch_size
+                ]
+                if len(audio_batch) < audio_batch_size:
+                    # 长度不够的时候, 补充静音
+                    audio_batch = np.pad(
+                        audio_batch,
+                        (0, audio_batch_size - len(audio_batch)),
+                        "constant",
+                        constant_values=0,
+                    )
+                    audio_batch = torch.from_numpy(audio_batch)
+
+                audio_batch = np.reshape(
+                    audio_batch, (audio_channel, len(audio_batch))
+                )
+                audio_batchs.append(audio_batch)
+                # if i < len(whisper_chunks):
+                #     whisper_batch.append(whisper_chunks[i])
+                # else:
+                #     # 通过补充空白音频推理恢复静态口型
+                #     empty_batch  = self.audio_processor.audio2chunks(
+                #         audio_batch[0], fps=self.fps, audio_feat_length=[1, 1]
+                #     )
+                #     whisper_chunks.extend(empty_batch)
+                #     whisper_batch.append(whisper_chunks[i])
+                gi += 1
+            yield (
+                whisper_batch,
+                face_batch,
+                vframe_batch,
+                audio_batchs,
+                    
+            )
+            whisper_batch = []
+            face_batch = []
+            vframe_batch = []
+            audio_batchs = []
+
+
     @torch.no_grad()
     def stream(
         self,
@@ -769,7 +940,9 @@ class LipsyncPipeline(DiffusionPipeline):
         # video_frames = read_video(video_path, use_decord=False)
         with VideoReader(video_path) as vr:
             video_frame_generater = vr.read_iter()
-            video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
+            # video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
+            source_frames = self.affine_transform_video2(video_frame_generater, vr.frames)
+
 
         synced_video_frames = []
 
@@ -783,28 +956,38 @@ class LipsyncPipeline(DiffusionPipeline):
         num_channels_latents = self.vae.config.latent_channels
 
         # Prepare latent variables
-        all_latents = self.prepare_latents(
-            len(whisper_chunks),
-            num_channels_latents,
-            height,
-            width,
-            weight_dtype,
-            device,
-            generator,
-        )
+        # all_latents = self.prepare_latents(
+        #     len(whisper_chunks),
+        #     num_channels_latents,
+        #     height,
+        #     width,
+        #     weight_dtype,
+        #     device,
+        #     generator,
+        # )
 
         num_inferences = math.ceil(len(whisper_chunks) / num_frames)
-        for i in tqdm.tqdm(range(num_inferences), desc="Doing inference..."):
+        data_gen = self.datagen_whisper_frames(num_inferences, audio_samples, whisper_chunks, source_frames, audio_chunk_size, audio_channel, batch_size=num_frames)
+
+        for i, batch_data in tqdm.tqdm(enumerate(data_gen), total=num_inferences,desc="Doing inference..."):
+        # for i in tqdm.tqdm(range(num_inferences), desc="Doing inference..."):
+
+            whisper_batch, face_batch, vframe_batch, audio_batch = batch_data
+            inference_faces = np.array(face_batch)
+
+            latents = self.prepare_latents(len(whisper_batch), num_channels_latents, height, width, weight_dtype, device, generator)
+
             if self.unet.add_audio_layer:
-                audio_embeds = torch.stack(whisper_chunks[i * num_frames : (i + 1) * num_frames])
+                # audio_embeds = torch.stack(whisper_chunks[i * num_frames : (i + 1) * num_frames])
+                audio_embeds = torch.stack(whisper_batch)
                 audio_embeds = audio_embeds.to(device, dtype=weight_dtype)
                 if do_classifier_free_guidance:
                     null_audio_embeds = torch.zeros_like(audio_embeds)
                     audio_embeds = torch.cat([null_audio_embeds, audio_embeds])
             else:
                 audio_embeds = None
-            inference_faces = faces[i * num_frames : (i + 1) * num_frames]
-            latents = all_latents[:, :, i * num_frames : (i + 1) * num_frames]
+            # inference_faces = faces[i * num_frames : (i + 1) * num_frames]
+            # latents = all_latents[:, :, i * num_frames : (i + 1) * num_frames]
             ref_pixel_values, masked_pixel_values, masks = self.image_processor.prepare_masks_and_masked_images(
                 inference_faces, affine_transform=False
             )
@@ -869,9 +1052,11 @@ class LipsyncPipeline(DiffusionPipeline):
             alpha = None 
             # decoded_latents = inference_faces
             for index, new_face in enumerate(decoded_latents):
+
                 ni = i * num_frames + index
                 # restore face
-                x1, y1, x2, y2 = boxes[ni]
+                boxes = vframe_batch[index]["boxes"]
+                x1, y1, x2, y2 = boxes
                 org_height = int(y2 - y1)
                 org_width = int(x2 - x1)
                 # nor_face = new_face.cpu().numpy().astype(np.float16)
@@ -880,7 +1065,8 @@ class LipsyncPipeline(DiffusionPipeline):
                 face = torchvision.transforms.functional.resize(
                     new_face, size=(org_height, org_width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
                 )
-                org_frame = video_frames[ni]
+                # org_frame = org_frames[index]
+                org_frame = vframe_batch[index]["video"]
 
                 if org_frame.shape[-1] == 4:
                     if not (
@@ -890,10 +1076,12 @@ class LipsyncPipeline(DiffusionPipeline):
                     oframe = org_frame[:, :, :3]
                 else:
                     oframe = org_frame
-                out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrices[ni])
+                affine_matrice = vframe_batch[index]["affine"]
+                out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
                 if self.gfpgan:
-                    fbbox = fbboxs[ni]
+                    # fbbox = fbboxs[index]
+                    fbbox = vframe_batch[index]["fbbox"]
                     x1, y1, x2, y2 = fbbox
                     gan_face = self.face_enhance(out_frame[y1:y2, x1:x2].copy())
                     out_frame[y1:y2, x1:x2] = gan_face
@@ -905,19 +1093,21 @@ class LipsyncPipeline(DiffusionPipeline):
                         out_frame[:, :, 2],
                         alpha,
                     ])
-                audio_data = audio_samples[ni*audio_chunk_size:(ni+1) *audio_chunk_size]
+                # audio_data = audio_samples[ni*audio_chunk_size:(ni+1) *audio_chunk_size]
+                # audio_data = audio_data.numpy()
+                # if len(audio_data) < audio_chunk_size:
+                #     # 长度不够的时候, 补充静音
+                #     audio_data = np.pad(
+                #         audio_data,
+                #         (0, audio_chunk_size - len(audio_data)),
+                #         "constant",
+                #         constant_values=0,
+                #     )
+                # audio_data = np.reshape(
+                #     audio_data, (audio_channel, len(audio_data))
+                # )
+                audio_data = audio_batch[index]
                 audio_data = audio_data.numpy()
-                if len(audio_data) < audio_chunk_size:
-                    # 长度不够的时候, 补充静音
-                    audio_data = np.pad(
-                        audio_data,
-                        (0, audio_chunk_size - len(audio_data)),
-                        "constant",
-                        constant_values=0,
-                    )
-                audio_data = np.reshape(
-                    audio_data, (audio_channel, len(audio_data))
-                )
                 audio_data = audio_data.astype(np.float32)
                 if ni == 0:
                     vwriter.init_stream(out_frame, audio_data, fps=video_fps, sample_rate=audio_sample_rate)
@@ -944,7 +1134,7 @@ class LipsyncPipeline(DiffusionPipeline):
         # subprocess.run(command, shell=True)
 
         # 训练过程中,为了避免内存溢出, 手动释放
-        del video_frames
+        del source_frames
         del synced_video_frames
         del audio_samples
         del whisper_feature

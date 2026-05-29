@@ -723,6 +723,8 @@ class LipsyncPipeline(DiffusionPipeline):
         fbboxs = []
         frames_data = []
         # print(f"Affine transforming {len(video_frames)} faces...")
+        if stopat is not None:
+            frame_num = stopat
         for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             frame_item = {}
             if frame.shape[-1] == 4:
@@ -941,7 +943,7 @@ class LipsyncPipeline(DiffusionPipeline):
         with VideoReader(video_path) as vr:
             video_frame_generater = vr.read_iter()
             # video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
-            source_frames = self.affine_transform_video2(video_frame_generater, vr.frames)
+            source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=len(whisper_chunks))
 
 
         synced_video_frames = []

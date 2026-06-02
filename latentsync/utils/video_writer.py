@@ -281,7 +281,7 @@ class VideoReader:
     @property
     def sample_rate(self):
         if self.audio_stream:
-            return int(1 / self.audio_stream.time_base)
+            return self.audio_stream.rate
         return None
 
     @property

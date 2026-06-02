@@ -710,7 +710,7 @@ class LipsyncPipeline(DiffusionPipeline):
         # plt.savefig("filter_3p_smooth_01_both.png")
         pass
 
-    def affine_transform_video2(self, video_frames: np.ndarray, frame_num=None, stopat=None):
+    def affine_transform_video2(self, video_frames: np.ndarray, frame_num=None, stopat=None, use_euro=False):
         faces = []
         boxes = []
         affine_matrices = []
@@ -725,10 +725,12 @@ class LipsyncPipeline(DiffusionPipeline):
         # print(f"Affine transforming {len(video_frames)} faces...")
         if stopat is not None:
             frame_num = stopat
-        for i, frame in tqdm.tqdm(enumerate(video_frames), total=frame_num):
+        for i, orgframe in tqdm.tqdm(enumerate(video_frames), total=frame_num):
             frame_item = {}
-            if frame.shape[-1] == 4:
-                frame = frame[:, :, :3]
+            if orgframe.shape[-1] == 4:
+                image = orgframe[:, :, :3]
+            else:
+                image = orgframe
                 # alpha = frame[:, :, 3]
                 # bg_r, bg_g, bg_b = 0, 255, 0
                 # alpha_normal = alpha.astype(float) / 255.0
@@ -741,7 +743,6 @@ class LipsyncPipeline(DiffusionPipeline):
                 break
 
             # face, box, affine_matrix = self.image_processor.affine_transform(frame)
-            image = frame
             bbox, landmark_2d_106 = self.image_processor.face_detector(image)
             if bbox is None:
                 raise RuntimeError("Face not detected")
@@ -749,33 +750,35 @@ class LipsyncPipeline(DiffusionPipeline):
             
             current_time = time.time()
             org_landmarks.append(landmark_2d_106)
-            smoothed_landmarks = np.zeros_like(landmark_2d_106)
-            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
-                if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
-                    # filters.append(curfilter)
-                    filters[j] = curfilter
-                    smoothed_landmarks[j] = landmark_2d_106[j]
-                else:
-                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
-            landmark_2d_106 = smoothed_landmarks
+            if use_euro:
+                smoothed_landmarks = np.zeros_like(landmark_2d_106)
+                for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
+                    if i == 0:
+                        curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
+                        # filters.append(curfilter)
+                        filters[j] = curfilter
+                        smoothed_landmarks[j] = landmark_2d_106[j]
+                    else:
+                        smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
+                landmark_2d_106 = smoothed_landmarks
             landmarks_list.append(landmark_2d_106)
             # landmark_2d_106 = smoother.smooth(landmark_2d_106)
-            org_video_frames.append(frame)
+            # org_video_frames.append(frame)
             pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
             pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
             pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
             landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
-            smoothed_landmarks = np.zeros_like(landmarks3)
-            for j in range(3):
-                if i == 0:
-                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
-                    # filters.append(curfilter)
-                    filters3[j] = curfilter
-                    smoothed_landmarks[j] = landmarks3[j]
-                else:
-                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
-            landmarks3 = smoothed_landmarks
+            if use_euro:
+                smoothed_landmarks = np.zeros_like(landmarks3)
+                for j in range(3):
+                    if i == 0:
+                        curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
+                        # filters.append(curfilter)
+                        filters3[j] = curfilter
+                        smoothed_landmarks[j] = landmarks3[j]
+                    else:
+                        smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
+                landmarks3 = smoothed_landmarks
             landmarks3_list.append(landmarks3)
             face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
             box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
@@ -784,7 +787,7 @@ class LipsyncPipeline(DiffusionPipeline):
             # faces.append(face)
             # boxes.append(box)
             # affine_matrices.append(affine_matrix)
-            frame_item["video"] = frame
+            frame_item["video"] = orgframe
             frame_item["face"] = face
             frame_item["boxes"] = box
             frame_item["affine"] = affine_matrix

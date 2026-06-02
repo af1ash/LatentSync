@@ -20,25 +20,25 @@ class VideoWriter:
     """
     vformat2codec = {
         # pix_fmt, codec, audio_codec, options
-        ".mov": [
-            "yuv422p10le",
-            "prores_ks",
-            "aac",
-            {
-                "tune": "zerolatency",
-                'profile': '3',  # ProRes 422 HQ
-                'vendor': 'apl0',
-                'qscale': '10',   # 质量参数（可选）
-            },
-        ],
         # ".mov": [
-        #     "yuv444p10le",
+        #     "yuv422p10le",
         #     "prores_ks",
         #     "aac",
         #     {
         #         "tune": "zerolatency",
+        #         'profile': '3',  # ProRes 422 HQ
+        #         'vendor': 'apl0',
+        #         'qscale': '10',   # 质量参数（可选）
         #     },
         # ],
+        ".mov": [
+            "yuva444p10le",
+            "prores_ks",
+            "aac",
+            {
+                "tune": "zerolatency",
+            },
+        ],
         ".webm": [
             "yuva420p",
             "libvpx-vp9",
@@ -253,11 +253,11 @@ class VideoReader:
     def __init__(self, input_videoname):
         self.input_videoname = input_videoname
         self.container = av.open(self.input_videoname)
-        suffix = Path(self.input_videoname).suffix
-        if suffix == '.mov':
-            self.vformat = 'rgba'
-        else:
-            self.vformat = 'rgb24'
+        # suffix = Path(self.input_videoname).suffix
+        # if suffix in ['.mov', '.mkv']:
+        #     self.vformat = 'rgba'
+        # else:
+        #     self.vformat = 'rgb24'
         self.audio_stream = None
         self.video_stream = None
         for stream in self.container.streams:
@@ -265,6 +265,10 @@ class VideoReader:
                 self.audio_stream = stream
             elif stream.type == "video":
                 self.video_stream = stream
+                if 'a' in self.video_stream.pix_fmt:
+                    self.vformat = 'rgba'
+                else:
+                    self.vformat = 'rgb24'
 
     @property
     def fps(self):

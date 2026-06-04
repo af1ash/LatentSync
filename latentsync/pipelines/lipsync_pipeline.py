@@ -857,7 +857,7 @@ class LipsyncPipeline(DiffusionPipeline):
                         "constant",
                         constant_values=0,
                     )
-                    audio_batch = torch.from_numpy(audio_batch)
+                    # audio_batch = torch.from_numpy(audio_batch)
 
                 audio_batch = np.reshape(
                     audio_batch, (audio_channel, len(audio_batch))
@@ -938,16 +938,19 @@ class LipsyncPipeline(DiffusionPipeline):
         # 4. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
-        whisper_feature = self.audio_encoder.audio2feat(audio_path)
-        whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
-        audio_samples = read_audio(audio_path)
+        # audio_samples = read_audio(audio_path)
         # video_frames = read_video(video_path, use_decord=False)
         with VideoReader(video_path) as vr:
             video_frame_generater = vr.read_iter()
             # video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
-            source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=len(whisper_chunks))
+            # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=len(whisper_chunks))
+            source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
+            audio_samples = vr.read(type_="audio")
+            audio_samples = audio_samples.astype(np.float32)[0]
 
+        whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+        whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
         synced_video_frames = []
 
@@ -970,8 +973,12 @@ class LipsyncPipeline(DiffusionPipeline):
         #     device,
         #     generator,
         # )
+        strict = kwargs.get("strict", "video")
+        if strict == "video":
+            target_frame_num = len(source_frames)
+            whisper_chunks = whisper_chunks[:len(source_frames)]
 
-        num_inferences = math.ceil(len(whisper_chunks) / num_frames)
+        num_inferences = math.ceil(target_frame_num / num_frames)
         data_gen = self.datagen_whisper_frames(num_inferences, audio_samples, whisper_chunks, source_frames, audio_chunk_size, audio_channel, batch_size=num_frames)
 
         for i, batch_data in tqdm.tqdm(enumerate(data_gen), total=num_inferences,desc="Doing inference..."):
@@ -1112,8 +1119,8 @@ class LipsyncPipeline(DiffusionPipeline):
                 #     audio_data, (audio_channel, len(audio_data))
                 # )
                 audio_data = audio_batch[index]
-                audio_data = audio_data.numpy()
-                audio_data = audio_data.astype(np.float32)
+                # audio_data = audio_data.numpy()
+                # audio_data = audio_data.astype(np.float32)
                 if ni == 0:
                     vwriter.init_stream(out_frame, audio_data, fps=video_fps, sample_rate=audio_sample_rate)
                 vwriter.encode_frame(out_frame, audio_data, video_pts=ni)

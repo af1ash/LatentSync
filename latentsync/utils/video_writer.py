@@ -20,25 +20,25 @@ class VideoWriter:
     """
     vformat2codec = {
         # pix_fmt, codec, audio_codec, options
-        # ".mov": [
-        #     "yuv422p10le",
-        #     "prores_ks",
-        #     "aac",
-        #     {
-        #         "tune": "zerolatency",
-        #         'profile': '3',  # ProRes 422 HQ
-        #         'vendor': 'apl0',
-        #         'qscale': '10',   # 质量参数（可选）
-        #     },
-        # ],
         ".mov": [
-            "yuva444p10le",
+            "yuv422p10le",
             "prores_ks",
             "aac",
             {
                 "tune": "zerolatency",
+                'profile': '3',  # ProRes 422 HQ
+                'vendor': 'apl0',
+                'qscale': '10',   # 质量参数（可选）
             },
         ],
+        # ".mov": [
+        #     "yuva444p10le",
+        #     "prores_ks",
+        #     "aac",
+        #     {
+        #         "tune": "zerolatency",
+        #     },
+        # ],
         ".webm": [
             "yuva420p",
             "libvpx-vp9",
@@ -107,6 +107,7 @@ class VideoWriter:
             self.vformat = "rgba"
         else:
             self.vformat = "rgb24"
+        print(f"{self.vformat=}")
 
         # 音频流配置
         if audio_data is not None:

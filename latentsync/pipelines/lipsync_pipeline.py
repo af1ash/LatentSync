@@ -729,6 +729,14 @@ class LipsyncPipeline(DiffusionPipeline):
             frame_item = {}
             if orgframe.shape[-1] == 4:
                 image = orgframe[:, :, :3]
+                # alpha = orgframe[:, :, 3]
+                # bg_r, bg_g, bg_b = 0, 255, 0
+                # alpha_normal = alpha.astype(float) / 255.0
+                # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+                # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+                # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+                # image = np.stack([r_out, g_out, b_out], axis=-1)
+                # orgframe = orgframe[:, :, :3]
             else:
                 image = orgframe
                 # alpha = frame[:, :, 3]
@@ -885,6 +893,13 @@ class LipsyncPipeline(DiffusionPipeline):
             vframe_batch = []
             audio_batchs = []
 
+    def boxblur(self, image):
+        height, width, _ = image.shape
+        # radius = int(min(height, width) * 0.001)
+        radius = 1
+        ksize = (2*radius+1, 2*radius+1)
+        blurred = cv2.blur(image, ksize)
+        return blurred
 
     @torch.no_grad()
     def stream(
@@ -938,8 +953,9 @@ class LipsyncPipeline(DiffusionPipeline):
         # 4. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
-
         # audio_samples = read_audio(audio_path)
+        # audio_samples = audio_samples.numpy().astype(np.float32)
+        # audio_samples = audio_samples * 0.00001
         # video_frames = read_video(video_path, use_decord=False)
         with VideoReader(video_path) as vr:
             video_frame_generater = vr.read_iter()
@@ -948,7 +964,7 @@ class LipsyncPipeline(DiffusionPipeline):
             source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
             audio_samples = vr.read(type_="audio")
             audio_samples = audio_samples.astype(np.float32)[0]
-
+        
         whisper_feature = self.audio_encoder.audio2feat(audio_samples)
         whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
@@ -977,6 +993,8 @@ class LipsyncPipeline(DiffusionPipeline):
         if strict == "video":
             target_frame_num = len(source_frames)
             whisper_chunks = whisper_chunks[:len(source_frames)]
+        else:
+            target_frame_num = len(whisper_chunks)
 
         num_inferences = math.ceil(target_frame_num / num_frames)
         data_gen = self.datagen_whisper_frames(num_inferences, audio_samples, whisper_chunks, source_frames, audio_chunk_size, audio_channel, batch_size=num_frames)
@@ -1091,6 +1109,7 @@ class LipsyncPipeline(DiffusionPipeline):
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
+                out_frame = self.boxblur(out_frame)
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
                     fbbox = vframe_batch[index]["fbbox"]

@@ -40,10 +40,8 @@ from ..utils.video_writer import VideoWriter, VideoReader
 import tqdm
 import soundfile as sf
 import matplotlib.pyplot as plt
-# from ..gfpgan.utils import img2tensor, tensor2img
 
-from basicsr.utils import imwrite, img2tensor, tensor2img
-from basicsr.utils.misc import gpu_is_available, get_device
+from basicsr.utils import img2tensor, tensor2img
 from torchvision.transforms.functional import normalize
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -535,35 +533,6 @@ class LipsyncPipeline(DiffusionPipeline):
         del audio_samples
         del whisper_feature
         del whisper_chunks
-
-    def face_enhance(self, res_frame, face_restore_visibility=0.5):
-        assert self.gfpgan, f"{self.gfpgan=}"
-        height, width, _ = res_frame.shape
-        res_frame = cv2.resize(
-                            res_frame.astype(np.uint8), (512, 512)
-                        )
-        cropped_face_t = img2tensor(
-            res_frame / 255.0, bgr2rgb=True, float32=True
-        )
-        normalize(
-            cropped_face_t,
-            (0.5, 0.5, 0.5),
-            (0.5, 0.5, 0.5),
-            inplace=True,
-        )
-        cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
-        output = self.gfpgan(cropped_face_t)[0]
-        cropped_face = tensor2img(
-            output, rgb2bgr=True, min_max=(-1, 1)
-        )
-        res_frame = (
-            res_frame * (1 - face_restore_visibility)
-            + cropped_face * face_restore_visibility
-        )
-        res_frame = cv2.resize(
-                    res_frame.astype(np.uint8), (width, height)
-                )
-        return res_frame
 
     def face_enhance1(self, res_frame, fidelity_weight=1.0):
         self.facehelper.clean_all()

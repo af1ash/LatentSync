@@ -21,7 +21,6 @@ from latentsync.models.unet import UNet3DConditionModel
 from latentsync.pipelines.lipsync_pipeline import LipsyncPipeline
 from accelerate.utils import set_seed
 from latentsync.whisper.audio2feature import Audio2Feature
-# from latentsync.gfpgan.r_chainner import model_loading
 from DeepCache import DeepCacheSDHelper
 
 from basicsr.utils.download_util import load_file_from_url

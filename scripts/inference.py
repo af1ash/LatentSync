@@ -21,8 +21,12 @@ from latentsync.models.unet import UNet3DConditionModel
 from latentsync.pipelines.lipsync_pipeline import LipsyncPipeline
 from accelerate.utils import set_seed
 from latentsync.whisper.audio2feature import Audio2Feature
-from latentsync.gfpgan.r_chainner import model_loading
+# from latentsync.gfpgan.r_chainner import model_loading
 from DeepCache import DeepCacheSDHelper
+
+from basicsr.utils.download_util import load_file_from_url
+from basicsr.utils.registry import ARCH_REGISTRY
+from facelib.utils.face_restoration_helper import FaceRestoreHelper
 
 
 def main(config, args):
@@ -68,19 +72,41 @@ def main(config, args):
 
     unet = unet.to(dtype=dtype)
     device = "cuda"
-    fr_model_path = f"checkpoints/gfpgan/GFPGANv1.3.pth"
+    # fr_model_path = f"checkpoints/gfpgan/GFPGANv1.3.pth"
     # sd = torch.load(
     #             fr_model_path, map_location=device, weights_only=True
     #         )
     # gfpgan = model_loading.load_state_dict(sd).eval()
     # gfpgan.to(device)
-    gfpgan = None
+    # gfpgan = None
+    pretrain_model_url = {
+        'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
+    }
+    net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
+                                            connect_list=['32', '64', '128', '256']).to(device)
+    
+    # ckpt_path = 'weights/CodeFormer/codeformer.pth'
+    ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
+                                    model_dir='weights/CodeFormer', progress=True, file_name=None)
+    checkpoint = torch.load(ckpt_path)['params_ema']
+    net.load_state_dict(checkpoint)
+    net.eval()
+    gfpgan = net
+    face_helper = FaceRestoreHelper(
+        args.upscale,
+        face_size=512,
+        crop_ratio=(1, 1),
+        det_model = args.detection_model,
+        save_ext='png',
+        use_parse=True,
+        device=device)
     pipeline = LipsyncPipeline(
         vae=vae,
         audio_encoder=audio_encoder,
         unet=unet,
         scheduler=scheduler,
-        gfpgan=gfpgan
+        gfpgan=gfpgan,
+        facehelper=face_helper
     ).to("cuda")
 
     # use DeepCache
@@ -124,6 +150,11 @@ if __name__ == "__main__":
     parser.add_argument("--temp_dir", type=str, default="temp")
     parser.add_argument("--seed", type=int, default=1247)
     parser.add_argument("--enable_deepcache", action="store_true")
+    parser.add_argument('--detection_model', type=str, default='retinaface_resnet50', 
+            help='Face detector. Optional: retinaface_resnet50, retinaface_mobile0.25, YOLOv5l, YOLOv5n, dlib. \
+                Default: retinaface_resnet50')
+    parser.add_argument('-s', '--upscale', type=int, default=1, 
+            help='The final upsampling scale of the image. Default: 2')
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)

@@ -40,7 +40,10 @@ from ..utils.video_writer import VideoWriter, VideoReader
 import tqdm
 import soundfile as sf
 import matplotlib.pyplot as plt
-from ..gfpgan.utils import img2tensor, tensor2img
+# from ..gfpgan.utils import img2tensor, tensor2img
+
+from basicsr.utils import imwrite, img2tensor, tensor2img
+from basicsr.utils.misc import gpu_is_available, get_device
 from torchvision.transforms.functional import normalize
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -96,7 +99,8 @@ class LipsyncPipeline(DiffusionPipeline):
             EulerAncestralDiscreteScheduler,
             DPMSolverMultistepScheduler,
         ],
-        gfpgan=None
+        gfpgan=None,
+        facehelper=None
     ):
         super().__init__()
 
@@ -159,6 +163,7 @@ class LipsyncPipeline(DiffusionPipeline):
 
         self.set_progress_bar_config(desc="Steps")
         self.gfpgan = gfpgan
+        self.facehelper = facehelper
 
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
@@ -559,6 +564,48 @@ class LipsyncPipeline(DiffusionPipeline):
                     res_frame.astype(np.uint8), (width, height)
                 )
         return res_frame
+
+    def face_enhance1(self, res_frame, fidelity_weight=1.0):
+        self.facehelper.clean_all()
+        self.facehelper.read_image(res_frame)
+        self.facehelper.get_face_landmarks_5(
+                only_center_face=True, resize=640, eye_dist_threshold=5)
+        # print(f'\tdetect {num_det_faces} faces')
+        # align and warp each face
+        self.facehelper.align_warp_face()
+        for idx, cropped_face in enumerate(self.facehelper.cropped_faces):
+            # prepare data
+            cropped_face_t = img2tensor(cropped_face / 255., bgr2rgb=False, float32=True)
+            normalize(cropped_face_t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+            cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
+
+            try:
+                with torch.no_grad():
+                    output = self.gfpgan(cropped_face_t, w=fidelity_weight, adain=True)[0]
+                    restored_face = tensor2img(output, rgb2bgr=False, min_max=(-1, 1))
+                del output
+                torch.cuda.empty_cache()
+            except Exception as error:
+                print(f'\tFailed inference for CodeFormer: {error}')
+                restored_face = tensor2img(cropped_face_t, rgb2bgr=False, min_max=(-1, 1))
+
+            restored_face = restored_face.astype('uint8')
+            self.facehelper.add_restored_face(restored_face, cropped_face)
+
+        # upsample the background
+        # if bg_upsampler is not None:
+        #     # Now only support RealESRGAN for upsampling background
+        #     bg_img = bg_upsampler.enhance(img, outscale=args.upscale)[0]
+        # else:
+        #     bg_img = None
+        bg_img = None
+        self.facehelper.get_inverse_affine(None)
+        # paste each restored face to the input image
+        # if args.face_upsample and face_upsampler is not None: 
+        #     restored_img = face_helper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=args.draw_box, face_upsampler=face_upsampler)
+        # else:
+        restored_img = self.facehelper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=False)
+        return restored_img
 
     def affine_transform_video1(self, video_frames: np.ndarray, frame_num=None, stopat=None):
         faces = []
@@ -1109,13 +1156,14 @@ class LipsyncPipeline(DiffusionPipeline):
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
-                out_frame = self.boxblur(out_frame)
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
-                    fbbox = vframe_batch[index]["fbbox"]
-                    x1, y1, x2, y2 = fbbox
-                    gan_face = self.face_enhance(out_frame[y1:y2, x1:x2].copy())
-                    out_frame[y1:y2, x1:x2] = gan_face
+                    # fbbox = vframe_batch[index]["fbbox"]
+                    # x1, y1, x2, y2 = fbbox
+                    out_frame = self.face_enhance1(out_frame.copy())
+                    # out_frame[y1:y2, x1:x2] = gan_face
+                else:
+                    out_frame = self.boxblur(out_frame)
 
                 if alpha is not None:
                     out_frame = cv2.merge([

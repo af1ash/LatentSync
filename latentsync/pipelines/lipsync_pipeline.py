@@ -752,7 +752,7 @@ class LipsyncPipeline(DiffusionPipeline):
                 # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
                 # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
                 # image = np.stack([r_out, g_out, b_out], axis=-1)
-                # orgframe = orgframe[:, :, :3]
+                # orgframe = image
             else:
                 image = orgframe
                 # alpha = frame[:, :, 3]

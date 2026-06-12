@@ -827,6 +827,71 @@ class LipsyncPipeline(DiffusionPipeline):
         # return org_video_frames, faces, boxes, affine_matrices, fbboxs
         return frames_data
 
+    def affine_transform_face(self, orgframe: np.ndarray, pti: int, use_euro=False):
+        filters = {}
+        filters3 = {}
+        # print(f"Affine transforming {len(video_frames)} faces...")
+        frame_item = {}
+        if orgframe.shape[-1] == 4:
+            image = orgframe[:, :, :3]
+            # alpha = orgframe[:, :, 3]
+            # bg_r, bg_g, bg_b = 0, 255, 0
+            # alpha_normal = alpha.astype(float) / 255.0
+            # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+            # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+            # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+            # image = np.stack([r_out, g_out, b_out], axis=-1)
+            # orgframe = orgframe[:, :, :3]
+            # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
+        else:
+            image = orgframe
+
+        # face, box, affine_matrix = self.image_processor.affine_transform(frame)
+        bbox, landmark_2d_106 = self.image_processor.face_detector(image)
+        if bbox is None:
+            raise RuntimeError("Face not detected")
+            
+        current_time = time.time()
+        if use_euro:
+            smoothed_landmarks = np.zeros_like(landmark_2d_106)
+            for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
+                if pti == 0:
+                    curfilter = OneEuroFiler(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
+                    # filters.append(curfilter)
+                    filters[j] = curfilter
+                    smoothed_landmarks[j] = landmark_2d_106[j]
+                else:
+                    smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
+            landmark_2d_106 = smoothed_landmarks
+        # org_video_frames.append(frame)
+        pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+        pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
+        pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+        landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
+        if use_euro:
+            smoothed_landmarks = np.zeros_like(landmarks3)
+            for j in range(3):
+                if pti == 0:
+                    curfilter = OneEuroFiler(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
+                    # filters.append(curfilter)
+                    filters3[j] = curfilter
+                    smoothed_landmarks[j] = landmarks3[j]
+                else:
+                    smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
+            landmarks3 = smoothed_landmarks
+        face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
+        box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
+        face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
+        face = rearrange(torch.from_numpy(face), "h w c -> c h w")
+        frame_item["video"] = orgframe
+        frame_item["face"] = face
+        frame_item["boxes"] = box
+        frame_item["affine"] = affine_matrix
+        frame_item["fbbox"] = bbox
+        frame_item["landmark_2d_106"] = landmark_2d_106
+        frame_item["landmark3"] = landmarks3
+        return frame_item
+
     def mirror_index(self, size, index):
         turn = index // size
         res = index % size
@@ -909,10 +974,10 @@ class LipsyncPipeline(DiffusionPipeline):
             vframe_batch = []
             audio_batchs = []
 
-    def boxblur(self, image):
+    def boxblur(self, image, radius=1):
         height, width, _ = image.shape
         # radius = int(min(height, width) * 0.001)
-        radius = 1
+        # radius = 1
         ksize = (2*radius+1, 2*radius+1)
         blurred = cv2.blur(image, ksize)
         return blurred
@@ -1125,14 +1190,15 @@ class LipsyncPipeline(DiffusionPipeline):
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
+                out_frame = self.boxblur(out_frame, radius=1)
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
                     out_frame = self.face_enhance1(out_frame.copy())
                     # out_frame[y1:y2, x1:x2] = gan_face
-                else:
-                    out_frame = self.boxblur(out_frame)
+                # else:
+                #     out_frame = self.boxblur(out_frame)
 
                 if alpha is not None:
                     out_frame = cv2.merge([

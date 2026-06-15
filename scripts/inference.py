@@ -37,7 +37,7 @@ def main(config, args):
     # Check if the GPU supports float16
     is_fp16_supported = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] > 7
     dtype = torch.float16 if is_fp16_supported else torch.float32
-
+    model_dir = args.model_dir
     print(f"Input video path: {args.video_path}")
     print(f"Input audio path: {args.audio_path}")
     print(f"Loaded checkpoint path: {args.inference_ckpt_path}")
@@ -45,9 +45,9 @@ def main(config, args):
     scheduler = DDIMScheduler.from_pretrained("configs")
 
     if config.model.cross_attention_dim == 768:
-        whisper_model_path = "checkpoints/whisper/small.pt"
+        whisper_model_path = f"{model_dir}/whisper/small.pt"
     elif config.model.cross_attention_dim == 384:
-        whisper_model_path = "checkpoints/whisper/tiny.pt"
+        whisper_model_path = f"{model_dir}/whisper/tiny.pt"
     else:
         raise NotImplementedError("cross_attention_dim must be 768 or 384")
 
@@ -58,7 +58,7 @@ def main(config, args):
         audio_feat_length=config.data.audio_feat_length,
     )
 
-    vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=dtype, local_files_only=True)
+    vae = AutoencoderKL.from_pretrained(f"{model_dir}/stabilityai/sd-vae-ft-mse", torch_dtype=dtype, local_files_only=True)
     # vae = AutoencoderKL.from_pretrained("checkpoints/zkzou/sd-vae-ft-L1", torch_dtype=dtype, local_files_only=True)
     vae.config.scaling_factor = 0.18215
     vae.config.shift_factor = 0
@@ -86,7 +86,7 @@ def main(config, args):
     
     # ckpt_path = 'weights/CodeFormer/codeformer.pth'
     ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
-                                    model_dir='weights/CodeFormer', progress=True, file_name=None)
+                                    model_dir=f'weights/CodeFormer', progress=True, file_name=None)
     checkpoint = torch.load(ckpt_path)['params_ema']
     net.load_state_dict(checkpoint)
     net.eval()
@@ -141,6 +141,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--unet_config_path", type=str, default="configs/unet.yaml")
     parser.add_argument("--inference_ckpt_path", type=str, required=True)
+    parser.add_argument("--model_dir", type=str, default="checkpoints", required=False)
     parser.add_argument("--video_path", type=str, required=True)
     parser.add_argument("--audio_path", type=str, required=True)
     parser.add_argument("--video_out_path", type=str, required=True)

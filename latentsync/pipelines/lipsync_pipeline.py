@@ -1087,7 +1087,7 @@ class LipsyncPipeline(DiffusionPipeline):
         else:
             target_frame_num = len(whisper_chunks)
         
-        print(f"{target_frame_num=},{len(whisper_chunks)}")
+        print(f"{target_frame_num=},{len(whisper_chunks)=}")
 
         num_inferences = math.ceil(target_frame_num / num_frames)
         data_gen = self.datagen_whisper_frames(num_inferences, audio_samples, whisper_chunks, vr, audio_chunk_size, audio_channel, batch_size=num_frames)

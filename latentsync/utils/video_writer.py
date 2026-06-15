@@ -277,7 +277,12 @@ class VideoReader:
 
     @property
     def frames(self):
-        return self.video_stream.frames
+        if self.video_stream.frames > 0:
+            return self.video_stream.frames
+        elif self.container.duration > 0:
+            return int(self.container.duration / 1000 / 1000 * int(self.video_stream.average_rate))
+        else:
+            return self.video_stream.frames
     
     @property
     def sample_rate(self):

@@ -63,7 +63,8 @@ class FaceRestoreHelper(object):
                  template_3points=False,
                  pad_blur=False,
                  use_parse=False,
-                 device=None):
+                 device=None,
+                 model_dir=None):
         self.template_3points = template_3points  # improve robustness
         self.upscale_factor = int(upscale_factor)
         # the cropped face ratio based on the square face

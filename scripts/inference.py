@@ -26,6 +26,7 @@ from DeepCache import DeepCacheSDHelper
 from basicsr.utils.download_util import load_file_from_url
 from basicsr.utils.registry import ARCH_REGISTRY
 from facelib.utils.face_restoration_helper import FaceRestoreHelper
+from Practical_RIFE.RIFE_HDv3 import RIFE
 
 
 def main(config, args):
@@ -86,11 +87,17 @@ def main(config, args):
     
     # ckpt_path = 'weights/CodeFormer/codeformer.pth'
     ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
-                                    model_dir=f'weights/CodeFormer', progress=True, file_name=None)
+                                    model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
     checkpoint = torch.load(ckpt_path)['params_ema']
     net.load_state_dict(checkpoint)
     net.eval()
     gfpgan = net
+
+    rife = RIFE(
+        f"{model_dir}/Practical_RIFE", args.multi, exp=args.exp,
+        scale=args.scale, usefp16=args.fp16
+    )
+
     face_helper = FaceRestoreHelper(
         args.upscale,
         face_size=512,
@@ -98,14 +105,16 @@ def main(config, args):
         det_model = args.detection_model,
         save_ext='png',
         use_parse=True,
-        device=device)
+        device=device,
+        model_dir=model_dir)
     pipeline = LipsyncPipeline(
         vae=vae,
         audio_encoder=audio_encoder,
         unet=unet,
         scheduler=scheduler,
         gfpgan=gfpgan,
-        facehelper=face_helper
+        facehelper=face_helper,
+        rife=rife
     ).to("cuda")
 
     # use DeepCache
@@ -122,7 +131,7 @@ def main(config, args):
     print(f"Initial seed: {torch.initial_seed()}")
 
     # pipeline(
-    pipeline.stream(
+    pipeline.stream1(
         video_path=args.video_path,
         audio_path=args.audio_path,
         video_out_path=args.video_out_path,
@@ -155,6 +164,13 @@ if __name__ == "__main__":
                 Default: retinaface_resnet50')
     parser.add_argument('-s', '--upscale', type=int, default=1, 
             help='The final upsampling scale of the image. Default: 2')
+    parser.add_argument('--fp16', dest='fp16', action='store_true', help='fp16 mode for faster and more lightweight inference on cards with Tensor Cores')
+    parser.add_argument('--UHD', dest='UHD', action='store_true', help='support 4k video')
+    parser.add_argument('--scale', dest='scale', type=float, default=1.0, help='Try scale=0.5 for 4k video')
+    parser.add_argument('--fps', dest='fps', type=int, default=None)
+    parser.add_argument('--exp', dest='exp', type=int, default=1)
+    parser.add_argument('--multi', dest='multi', type=int, default=2)
+    parser.add_argument('--withalpha', dest='withalpha', action='store_true', help='添加alpha通道')
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)

@@ -1514,26 +1514,30 @@ class LipsyncPipeline(DiffusionPipeline):
         # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
         # audio_samples = vr.read(type_="audio")
         # audio_samples = audio_samples.astype(np.float32)[0]
-        
-        whisper_feature = self.audio_encoder.audio2feat(audio_samples)
-        whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
+        video_fps = video_fps * self.rife.multi
 
+        strict = kwargs.get("strict", "audio")
+        if strict == "video":
+            target_frame_num = vr.frames
+            audio_samples = vr.read(type_="audio")
+            audio_samples = audio_samples.astype(np.float32)[0]
+            whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+            whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
+        else:
+            audio_samples = read_audio(audio_path)
+            audio_samples = audio_samples.numpy().astype(np.float32)
+            whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+            whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
+            target_frame_num = len(whisper_chunks)
+        
         synced_video_frames = []
 
         # audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)
         # audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
-        video_fps = video_fps * self.rife.multi
         audio_chunk_size = int(audio_sample_rate / video_fps)
         audio_channel = 1
         video_out_path = Path(video_out_path)
         vwriter = VideoWriter(str(video_out_path), outformat=video_out_path.suffix)
-
-        strict = kwargs.get("strict", "video")
-        if strict == "video":
-            target_frame_num = vr.frames
-            whisper_chunks = whisper_chunks[:vr.frames]
-        else:
-            target_frame_num = len(whisper_chunks)
 
         num_inferences = math.ceil(target_frame_num / num_frames)
 

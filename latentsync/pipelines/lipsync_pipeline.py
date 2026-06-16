@@ -1514,7 +1514,6 @@ class LipsyncPipeline(DiffusionPipeline):
         # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
         # audio_samples = vr.read(type_="audio")
         # audio_samples = audio_samples.astype(np.float32)[0]
-        video_fps = video_fps * self.rife.multi
 
         strict = kwargs.get("strict", "audio")
         if strict == "video":
@@ -1530,6 +1529,7 @@ class LipsyncPipeline(DiffusionPipeline):
             whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
             target_frame_num = len(whisper_chunks)
         
+        video_fps = video_fps * self.rife.multi
         synced_video_frames = []
 
         # audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)

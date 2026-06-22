@@ -6,6 +6,7 @@ model:
     attn_blocks: [0, 0, 0, 1, 1, 0, 0]
     dropout: 0.0
   visual_encoder: # input (48, 128, 256)
+    # num_frames * img_channels 16 * 3
     in_channels: 48
     block_out_channels: [64, 128, 256, 256, 512, 1024, 2048, 2048]
     downsample_factors: [[1, 2], 2, 2, 2, 2, 2, 2, 2]
@@ -19,18 +20,18 @@ ckpt:
 
 data:
   train_output_dir: debug/syncnet
-  num_val_samples: 2048
-  batch_size: 256 # 256
+  num_val_samples: 64 # 2048 跟数据集规模有关
+  batch_size: 8 # 256
   gradient_accumulation_steps: 1
-  num_workers: 12 # 12
+  num_workers: 1 # 12
   latent_space: false
   num_frames: 16
   resolution: 256
-  train_fileslist: /mnt/bn/maliva-gen-ai-v2/chunyu.li/fileslist/data_v10_core.txt
-  train_data_dir: ""
-  val_fileslist: ""
-  val_data_dir: /mnt/bn/maliva-gen-ai-v2/chunyu.li/VoxCeleb2/high_visual_quality/val
-  audio_mel_cache_dir: /mnt/bn/maliva-gen-ai-v2/chunyu.li/audio_cache/mel
+  train_fileslist: /home/lxb/workspace/LatentSync/data/filelist/mw_256.txt
+  train_data_dir: "/home/lxb/workspace/LatentSync/data/high_visual_quality"
+  val_fileslist: "/home/lxb/workspace/LatentSync/data/filelist/xiaoma_1_256.txt"
+  val_data_dir: /home/lxb/workspace/LatentSync/data/high_visual_quality/
+  audio_mel_cache_dir: /home/lxb/workspace/LatentSync/data/audio_cache/mel
   lower_half: true
   audio_sample_rate: 16000
   video_fps: 25

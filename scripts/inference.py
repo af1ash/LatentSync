@@ -114,7 +114,7 @@ def main(config, args):
         scheduler=scheduler,
         gfpgan=gfpgan,
         facehelper=face_helper,
-        rife=rife
+        # rife=rife
     ).to("cuda")
 
     # use DeepCache

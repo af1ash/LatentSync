@@ -1537,7 +1537,8 @@ class LipsyncPipeline(DiffusionPipeline):
         audio_chunk_size = int(audio_sample_rate / video_fps)
         audio_channel = 1
         video_out_path = Path(video_out_path)
-        vwriter = VideoWriter(str(video_out_path), outformat=video_out_path.suffix)
+        vformat = kwargs.get("vformat", "mp4")
+        vwriter = VideoWriter(str(video_out_path), codec_info=vformat)
 
         num_inferences = math.ceil(target_frame_num / num_frames)
 

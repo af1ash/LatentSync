@@ -19,8 +19,11 @@ class VideoWriter:
         prores_ks: yuv422p10le yuv444p10le yuva444p10le
     """
     vformat2codec = {
-        # pix_fmt, codec, audio_codec, options
-        ".mov": [
+        # codec:
+        #     prores_ks: yuv422p10le yuv444p10le yuva444p10le
+        # container, pix_fmt, codec, audio_codec, options
+        "mov": [
+            "mov",
             "yuv422p10le",
             "prores_ks",
             "aac",
@@ -31,15 +34,17 @@ class VideoWriter:
                 'qscale': '10',   # 质量参数（可选）
             },
         ],
-        # ".mov": [
-        #     "yuva444p10le",
-        #     "prores_ks",
-        #     "aac",
-        #     {
-        #         "tune": "zerolatency",
-        #     },
-        # ],
-        ".webm": [
+        "mov_alpha": [
+            "mov",
+            "yuva444p10le",
+            "prores_ks",
+            "aac",
+            {
+                "tune": "zerolatency",
+            },
+        ],
+        "webm": [
+            "webm",
             "yuva420p",
             "libvpx-vp9",
             "libvorbis",
@@ -47,7 +52,8 @@ class VideoWriter:
                 "deadline": "realtime",
             },
         ],
-        ".mkv": [
+        "mkv": [
+            "mkv",
             "yuva420p",
             "ffv1",
             "aac",
@@ -55,7 +61,8 @@ class VideoWriter:
                 "tune": "zerolatency",
             },
         ],
-        ".mp4": [
+        "mp4": [
+            "mp4"
             "yuv420p",
             "libx264",
             "aac",
@@ -63,7 +70,8 @@ class VideoWriter:
                 "tune": "zerolatency",
             },
         ],
-        ".flv": [
+        "flv": [
+            "mp4"
             "yuv420p",
             "h264",
             "aac",
@@ -76,14 +84,22 @@ class VideoWriter:
     def __init__(
         self,
         source_url,
-        outformat,
+        codec_info,
     ):
         self.source_url = source_url
 
         self.container = av.open(self.source_url, mode="w")
-        self.pix_fmt, self.codec, self.audio_codec, self.default_options = (
-            self.vformat2codec[outformat]
-        )
+        # self.pix_fmt, self.codec, self.audio_codec, self.default_options = (
+        #     self.vformat2codec[outformat]
+        # )
+        (
+            self.container_fmt,
+            self.pix_fmt,
+            self.codec,
+            self.audio_codec,
+            self.default_options,
+        ) = self.vformat2codec[codec_info]
+
         self.audio_stream = None
 
     def init_stream(self, frame_data, audio_data, fps, sample_rate):
@@ -107,7 +123,7 @@ class VideoWriter:
             self.vformat = "rgba"
         else:
             self.vformat = "rgb24"
-        print(f"{self.vformat=}")
+        # print(f"{self.vformat=}")
 
         # 音频流配置
         if audio_data is not None:
@@ -262,14 +278,14 @@ class VideoReader:
         self.audio_stream = None
         self.video_stream = None
         for stream in self.container.streams:
-            if stream.type == 'audio':
+            if stream.type == "audio":
                 self.audio_stream = stream
             elif stream.type == "video":
                 self.video_stream = stream
-                if 'a' in self.video_stream.pix_fmt:
-                    self.vformat = 'rgba'
+                if "a" in self.video_stream.pix_fmt:
+                    self.vformat = "rgba"
                 else:
-                    self.vformat = 'rgb24'
+                    self.vformat = "rgb24"
 
     @property
     def fps(self):
@@ -280,10 +296,15 @@ class VideoReader:
         if self.video_stream.frames > 0:
             return self.video_stream.frames
         elif self.container.duration > 0:
-            return int(self.container.duration / 1000 / 1000 * int(self.video_stream.average_rate))
+            return int(
+                self.container.duration
+                / 1000
+                / 1000
+                * int(self.video_stream.average_rate)
+            )
         else:
             return self.video_stream.frames
-    
+
     @property
     def sample_rate(self):
         if self.audio_stream:
@@ -295,7 +316,7 @@ class VideoReader:
         if self.audio_stream:
             return self.audio_stream.layout.channels
         return None
-    
+
     @property
     def layout(self):
         if self.audio_stream:
@@ -304,24 +325,22 @@ class VideoReader:
 
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc, tb):
         self.container.close()
-    
+
     def read(self, format="bgra", type_="video"):
         frame_list = []
         for frame in self.read_iter(format, type_):
             frame_list.append(frame)
-        if type_=="audio":
+        if type_ == "audio":
             return np.concatenate(frame_list, axis=1)
         return np.array(frame_list)
 
     def read_iter(self, format="rgba", type_="video"):
         if type_ == "video":
             read_stream = self.video_stream
-            frame_kwargs= {
-                "format": self.vformat
-            }
+            frame_kwargs = {"format": self.vformat}
         elif type_ == "audio":
             read_stream = self.audio_stream
             frame_kwargs = {}
@@ -335,7 +354,7 @@ class VideoReader:
             # 如果是交错格式 (如 flt, s16): shape 为 (1, 采样点数 * 通道数)
             if type_ == "audio":
                 if self.audio_stream.channels == 2:
-                    if 'p' in self.audio_stream.format.name:
+                    if "p" in self.audio_stream.format.name:
                         # 平面格式：直接获取左右声道
                         left_channel = data[0]
                         right_channel = data[1]
@@ -345,7 +364,7 @@ class VideoReader:
                         right_channel = data[0, 1::2]
                     data = np.array([left_channel, right_channel])
             # print(f"{data.shape=}")
-            yield data 
+            yield data
 
     def close(self):
         return self.container.close()

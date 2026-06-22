@@ -143,7 +143,8 @@ def main(config, args):
         height=config.data.resolution,
         mask_image_path=config.data.mask_image_path,
         temp_dir=args.temp_dir,
-        strict=args.strict
+        strict=args.strict,
+        vformat=args.vformat
     )
 
 
@@ -173,6 +174,7 @@ if __name__ == "__main__":
     parser.add_argument('--exp', dest='exp', type=int, default=1)
     parser.add_argument('--multi', dest='multi', type=int, default=2)
     parser.add_argument('--withalpha', dest='withalpha', action='store_true', help='添加alpha通道')
+    parser.add_argument("--vformat", default="mp4", choices=["mp4", "mov_alpha", "mov", "webm", "mkv", "flv"], help="视频编码格式")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)

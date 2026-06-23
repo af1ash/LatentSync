@@ -1682,16 +1682,12 @@ class LipsyncPipeline(DiffusionPipeline):
                 oframe = vframe_batch[index]["video"]
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
-                print(f"after restore {out_frame.shape=}")
-
                 out_frame = self.boxblur(out_frame, radius=1)
-                print(f"after boxblur {out_frame.shape=}")
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
                     out_frame = self.face_enhance1(out_frame.copy())
-                    print(f"after enhance1 {out_frame.shape=}")
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)

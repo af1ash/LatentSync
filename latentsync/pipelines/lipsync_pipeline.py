@@ -985,6 +985,56 @@ class LipsyncPipeline(DiffusionPipeline):
         mi = self.mirror_index( len(candidate_frames), index)
         return candidate_frames[mi]
 
+    def adjust_bbox_to_min_size(self, bbox, image_shape, min_size=512):
+        """
+        将 bbox 扩展至至少 min_size×min_size，但不超出图像边界。
+        若原图尺寸小于 min_size，则返回整个图像区域。
+        模型对图片的最小尺寸有要求
+        """
+        h, w = image_shape[:2]
+        x1, y1, x2, y2 = bbox
+
+        current_w = x2 - x1
+        current_h = y2 - y1
+
+        # 目标尺寸：至少 min_size，但不超过图像尺寸
+        target_w = min(max(current_w, min_size), w)
+        target_h = min(max(current_h, min_size), h)
+
+        # 以原 bbox 中心扩展
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+
+        half_w = target_w // 2
+        half_h = target_h // 2
+
+        new_x1 = cx - half_w
+        new_x2 = cx + half_w
+        new_y1 = cy - half_h
+        new_y2 = cy + half_h
+
+        # 边界裁剪（保证不越界）
+        if new_x1 < 0:
+            new_x2 -= new_x1
+            new_x1 = 0
+        if new_x2 > w:
+            new_x1 -= (new_x2 - w)
+            new_x2 = w
+        if new_y1 < 0:
+            new_y2 -= new_y1
+            new_y1 = 0
+        if new_y2 > h:
+            new_y1 -= (new_y2 - h)
+            new_y2 = h
+
+        # 如果调整后尺寸仍小于 min_size（只能是因为原图本身就小于 min_size）
+        # 此时实际上已经覆盖了整个图像，但可能因为整数除法导致偏差，重新修正为整图
+        if (new_x2 - new_x1) < min_size or (new_y2 - new_y1) < min_size:
+            # 此时说明原图尺寸小于 min_size，直接返回全图
+            return (0, 0, w, h)
+
+        return (int(new_x1), int(new_y1), int(new_x2), int(new_y2))
+
     def get_head_bbox(self, keypoints, confidences, image_shape):
         """
         根据关键点计算肩部以上头部的裁剪区域。
@@ -1063,7 +1113,9 @@ class LipsyncPipeline(DiffusionPipeline):
         if x2 <= x1 or y2 <= y1:
             return None
 
-        return (x1, y1, x2, y2)
+        bbox = (x1, y1, x2, y2)
+        bbox = self.adjust_bbox_to_min_size(bbox, image_shape)
+        return bbox
 
     def datagen_whisper_frames(
         self,
@@ -1630,13 +1682,16 @@ class LipsyncPipeline(DiffusionPipeline):
                 oframe = vframe_batch[index]["video"]
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
+                print(f"after restore {out_frame.shape=}")
 
                 out_frame = self.boxblur(out_frame, radius=1)
+                print(f"after boxblur {out_frame.shape=}")
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
                     out_frame = self.face_enhance1(out_frame.copy())
+                    print(f"after enhance1 {out_frame.shape=}")
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)

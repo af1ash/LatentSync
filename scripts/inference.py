@@ -27,6 +27,7 @@ from basicsr.utils.download_util import load_file_from_url
 from basicsr.utils.registry import ARCH_REGISTRY
 from facelib.utils.face_restoration_helper import FaceRestoreHelper
 from Practical_RIFE.RIFE_HDv3 import RIFE
+from ultralytics import YOLO
 
 
 def main(config, args):
@@ -72,41 +73,47 @@ def main(config, args):
 
     unet = unet.to(dtype=dtype)
     device = "cuda"
-    # fr_model_path = f"checkpoints/gfpgan/GFPGANv1.3.pth"
-    # sd = torch.load(
-    #             fr_model_path, map_location=device, weights_only=True
-    #         )
-    # gfpgan = model_loading.load_state_dict(sd).eval()
-    # gfpgan.to(device)
-    # gfpgan = None
-    pretrain_model_url = {
-        'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
-    }
-    net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
-                                            connect_list=['32', '64', '128', '256']).to(device)
+
+    gfpgan = None
+    face_helper = None
+    if not args.disable_codeformer:
+        pretrain_model_url = {
+            'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
+        }
+        net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
+                                                connect_list=['32', '64', '128', '256']).to(device)
     
-    # ckpt_path = 'weights/CodeFormer/codeformer.pth'
-    ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
-                                    model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
-    checkpoint = torch.load(ckpt_path)['params_ema']
-    net.load_state_dict(checkpoint)
-    net.eval()
-    gfpgan = net
+        # ckpt_path = 'weights/CodeFormer/codeformer.pth'
+        ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
+                                        model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
+        checkpoint = torch.load(ckpt_path)['params_ema']
+        net.load_state_dict(checkpoint)
+        net.eval()
+        gfpgan = net
+        face_helper = FaceRestoreHelper(
+            args.upscale,
+            face_size=512,
+            crop_ratio=(1, 1),
+            det_model = args.detection_model,
+            save_ext='png',
+            use_parse=True,
+            device=device,
+            model_dir=model_dir
+        )
 
-    rife = RIFE(
-        f"{model_dir}/Practical_RIFE", args.multi, exp=args.exp,
-        scale=args.scale, usefp16=args.fp16
-    )
+    rife = None
+    if args.fps > 25:
+        if args.UHD:
+            args.scale = 0.5
+        else:
+            scale = args.scale
+        multi = int(args.fps / 25)
+        rife = RIFE(
+            f"{model_dir}/Practical_RIFE", multi, exp=args.exp,
+            scale=scale, usefp16=args.fp16
+        )
 
-    face_helper = FaceRestoreHelper(
-        args.upscale,
-        face_size=512,
-        crop_ratio=(1, 1),
-        det_model = args.detection_model,
-        save_ext='png',
-        use_parse=True,
-        device=device,
-        model_dir=model_dir)
+    yolopose = YOLO(f"{model_dir}/yolo11n-pose.pt")
     pipeline = LipsyncPipeline(
         vae=vae,
         audio_encoder=audio_encoder,
@@ -114,7 +121,8 @@ def main(config, args):
         scheduler=scheduler,
         gfpgan=gfpgan,
         facehelper=face_helper,
-        # rife=rife
+        rife=rife,
+        yolopose=yolopose
     ).to("cuda")
 
     # use DeepCache
@@ -170,9 +178,10 @@ if __name__ == "__main__":
     parser.add_argument('--fp16', dest='fp16', action='store_true', help='fp16 mode for faster and more lightweight inference on cards with Tensor Cores')
     parser.add_argument('--UHD', dest='UHD', action='store_true', help='support 4k video')
     parser.add_argument('--scale', dest='scale', type=float, default=1.0, help='Try scale=0.5 for 4k video')
-    parser.add_argument('--fps', dest='fps', type=int, default=None)
+    parser.add_argument('--fps', dest='fps', type=int, default=25)
     parser.add_argument('--exp', dest='exp', type=int, default=1)
     parser.add_argument('--multi', dest='multi', type=int, default=2)
+    parser.add_argument('--disable_codeformer', dest='disable_codeformer', action='store_true', help='禁用面部增强')
     parser.add_argument('--withalpha', dest='withalpha', action='store_true', help='添加alpha通道')
     parser.add_argument("--vformat", default="mp4", choices=["mp4", "mov_alpha", "mov", "webm", "mkv", "flv"], help="视频编码格式")
     args = parser.parse_args()

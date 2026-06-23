@@ -167,7 +167,8 @@ class LipsyncPipeline(DiffusionPipeline):
         ],
         gfpgan=None,
         facehelper=None,
-        rife=None
+        rife=None,
+        yolopose=None
     ):
         super().__init__()
 
@@ -232,6 +233,7 @@ class LipsyncPipeline(DiffusionPipeline):
         self.gfpgan = gfpgan
         self.facehelper = facehelper
         self.rife = rife
+        self.yolopose = yolopose
 
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
@@ -898,26 +900,26 @@ class LipsyncPipeline(DiffusionPipeline):
         return frames_data
 
     def affine_transform_face(self, orgframe: np.ndarray, pti: int, one_euro=None):
-        filters = {}
-        filters3 = {}
+        # filters = {}
+        # filters3 = {}
         # print(f"Affine transforming {len(video_frames)} faces...")
         frame_item = {}
-        if orgframe.shape[-1] == 4:
-            image = orgframe[:, :, :3]
-            # alpha = orgframe[:, :, 3]
-            # bg_r, bg_g, bg_b = 0, 255, 0
-            # alpha_normal = alpha.astype(float) / 255.0
-            # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
-            # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
-            # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
-            # image = np.stack([r_out, g_out, b_out], axis=-1)
-            # orgframe = orgframe[:, :, :3]
-            # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
-        else:
-            image = orgframe
+        # if orgframe.shape[-1] == 4:
+        #     image = orgframe[:, :, :3]
+        #     # alpha = orgframe[:, :, 3]
+        #     # bg_r, bg_g, bg_b = 0, 255, 0
+        #     # alpha_normal = alpha.astype(float) / 255.0
+        #     # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+        #     # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+        #     # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+        #     # image = np.stack([r_out, g_out, b_out], axis=-1)
+        #     # orgframe = orgframe[:, :, :3]
+        #     # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
+        # else:
+        #     image = orgframe
 
         # face, box, affine_matrix = self.image_processor.affine_transform(frame)
-        bbox, landmark_2d_106 = self.image_processor.face_detector(image)
+        bbox, landmark_2d_106 = self.image_processor.face_detector(orgframe)
         if bbox is None:
             raise RuntimeError("Face not detected")
             
@@ -957,7 +959,7 @@ class LipsyncPipeline(DiffusionPipeline):
         #     landmarks3 = smoothed_landmarks
             smoothed_landmarks = one_euro.filter(landmarks3, timestamp=current_time)
             landmarks3= smoothed_landmarks
-        face, affine_matrix = self.image_processor.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=False)
+        face, affine_matrix = self.image_processor.restorer.align_warp_face(orgframe.copy(), landmarks3=landmarks3, smooth=False)
         box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
         face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
         face = rearrange(torch.from_numpy(face), "h w c -> c h w")
@@ -982,6 +984,86 @@ class LipsyncPipeline(DiffusionPipeline):
     def get_frame_data_by_index(self, index, candidate_frames):
         mi = self.mirror_index( len(candidate_frames), index)
         return candidate_frames[mi]
+
+    def get_head_bbox(self, keypoints, confidences, image_shape):
+        """
+        根据关键点计算肩部以上头部的裁剪区域。
+        返回: (x1, y1, x2, y2) 裁剪框坐标（像素），若无法检测则返回 None
+        """
+        h, w = image_shape[:2]
+        PADDING_RATIO = 0.2                # 裁剪框向外扩展比例（防止头部边缘被切）
+        CONFIDENCE_THRESHOLD = 0.5         # 关键点置信度阈值
+        SHOULDER_INDICES = [5, 6]   # 左肩、右肩
+        HEAD_INDICES = [0, 1, 2, 3, 4]  # 鼻子、双眼、双耳（用于辅助定位头部中心）
+        # 提取肩部关键点
+        shoulder_pts = []
+        for idx in SHOULDER_INDICES:
+            if confidences[idx] >= CONFIDENCE_THRESHOLD:
+                x, y = keypoints[idx]
+                shoulder_pts.append((x, y))
+
+        # 至少需要一个肩部点来确定水平位置和尺度
+        if len(shoulder_pts) == 0:
+            return None
+
+        # 计算肩部中心
+        shoulder_center_x = np.mean([p[0] for p in shoulder_pts])
+        shoulder_center_y = np.mean([p[1] for p in shoulder_pts])
+
+        # 计算肩宽（两肩距离），若只有一个肩则用固定比例估算
+        if len(shoulder_pts) == 2:
+            shoulder_width = np.linalg.norm(np.array(shoulder_pts[0]) - np.array(shoulder_pts[1]))
+        else:
+            # 单肩时，用肩到鼻子的距离估算肩宽（约为人脸宽度的 1.5 倍）
+            if confidences[0] >= CONFIDENCE_THRESHOLD:
+                nose = keypoints[0]
+                shoulder_width = 2.0 * np.linalg.norm(np.array(shoulder_pts[0]) - np.array(nose))
+            else:
+                shoulder_width = 200  # 保底估算值
+
+        # 用头部关键点辅助定位头部中心（取所有有效头部关键点的均值）
+        head_pts = []
+        for idx in HEAD_INDICES:
+            if confidences[idx] >= CONFIDENCE_THRESHOLD:
+                x, y = keypoints[idx]
+                head_pts.append((x, y))
+
+        if len(head_pts) > 0:
+            head_center_x = np.mean([p[0] for p in head_pts])
+            head_center_y = np.mean([p[1] for p in head_pts])
+        else:
+            # 若头部关键点全部丢失，用肩部中心向上偏移估算
+            head_center_x = shoulder_center_x
+            head_center_y = shoulder_center_y - shoulder_width * 0.5
+
+        # 计算裁剪框大小：以肩宽为基准，宽高比 0.8~1.0（头部通常是偏正方形区域）
+        crop_size = shoulder_width * 1.2  # 稍大于肩宽确保头部完整
+
+        # 以头部中心为中心，构建正方形裁剪框
+        half_size = crop_size / 2
+        x1 = int(head_center_x - half_size)
+        y1 = int(head_center_y - half_size)
+        x2 = int(head_center_x + half_size)
+        y2 = int(head_center_y + half_size)
+
+        # 添加 padding 向外扩展
+        pad = int(crop_size * PADDING_RATIO)
+        x1 -= pad
+        y1 -= pad
+        x2 += pad
+        y2 += pad
+
+        # 边界裁剪，防止超出图像范围
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
+
+        # 确保裁剪框有效
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return (x1, y1, x2, y2)
 
     def datagen_whisper_frames(
         self,
@@ -1015,8 +1097,29 @@ class LipsyncPipeline(DiffusionPipeline):
                 except StopIteration:
                     candidate_geneter = candidate_frames.read_iter()
                     org_frame = next(candidate_geneter)
-                
-                candidate_frame = self.affine_transform_face(org_frame, gi, one_euro_filter)
+                if org_frame.shape[-1] == 4:
+                    org_frame = org_frame[:, :, :3]
+                    # alpha = orgframe[:, :, 3]
+                    # bg_r, bg_g, bg_b = 0, 255, 0
+                    # alpha_normal = alpha.astype(float) / 255.0
+                    # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+                    # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+                    # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+                    # image = np.stack([r_out, g_out, b_out], axis=-1)
+                    # orgframe = orgframe[:, :, :3]
+                    # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
+
+                results = self.yolopose(org_frame, verbose=False)
+
+                keypoints = results[0].keypoints.xy[0].cpu().numpy()  # (17, 2)
+                confidences = results[0].keypoints.conf[0].cpu().numpy()  # (17,)
+                hbbox = self.get_head_bbox(keypoints, confidences, org_frame.shape)
+                x1, y1, x2, y2 = hbbox
+                crop_frame = org_frame[y1:y2, x1:x2]
+
+                candidate_frame = self.affine_transform_face(crop_frame, gi, one_euro_filter)
+                candidate_frame["input_img"] = org_frame
+                candidate_frame["headbbox"] = hbbox
 
                 face_batch.append(candidate_frame["face"])
                 # alpha_img = candidate_frame["alpha_img"]
@@ -1522,16 +1625,7 @@ class LipsyncPipeline(DiffusionPipeline):
                     new_face, size=(org_height, org_width), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
                 )
                 # org_frame = org_frames[index]
-                org_frame = vframe_batch[index]["video"]
-
-                if org_frame.shape[-1] == 4:
-                    if not (
-                        np.all(org_frame[:, :, 3] == 255) or np.all(org_frame[:, :, 3] == 0)
-                    ):
-                        alpha = org_frame[:, :, 3]
-                    oframe = org_frame[:, :, :3]
-                else:
-                    oframe = org_frame
+                oframe = vframe_batch[index]["video"]
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
@@ -1544,23 +1638,40 @@ class LipsyncPipeline(DiffusionPipeline):
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)
-
-                if alpha is not None:
-                    out_frame = cv2.merge([
-                        out_frame[:, :, 0],
-                        out_frame[:, :, 1],
-                        out_frame[:, :, 2],
-                        alpha,
-                    ])
                
                 # audio_data = audio_batch[index]
                 # landmarks3 = vframe_batch[index]["landmark3"]
                 # for point in landmarks3:
                 #     x, y = point
                 #     cv2.circle(out_frame, (x, y), 1, (0, 0, 255), -1)  # 使用红色标记点
+                # landmarks106 = vframe_batch[index]["landmark_2d_106"]
+                # landmarks106 = landmarks106.astype(np.int32)
+                # for point in landmarks106:
+                #     x, y = point
+                #     cv2.circle(out_frame, (x, y), 1, (0, 255, 0), -1)  # 使用红色标记点
                 # x1, y1, x2, y2 = vframe_batch[index]['fbbox']
                 # cv2.rectangle(out_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                yield out_frame
+                input_img = vframe_batch[index]["input_img"]
+                if input_img.shape[-1] == 4:
+                    if not (
+                        np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)
+                    ):
+                        alpha = input_img[:, :, 3]
+                    frame_rgb = input_img[:, :, :3]
+                else:
+                    frame_rgb = input_img
+                headbbox = vframe_batch[index]["headbbox"]
+                x1, y1, x2, y2 = headbbox
+                frame_rgb[y1:y2, x1:x2] = out_frame
+                if alpha is not None:
+                    frame_rgb = cv2.merge([
+                        frame_rgb[:, :, 0],
+                        frame_rgb[:, :, 1],
+                        frame_rgb[:, :, 2],
+                        alpha,
+                    ])
+
+                yield frame_rgb
 
 
     @torch.no_grad()
@@ -1615,8 +1726,9 @@ class LipsyncPipeline(DiffusionPipeline):
             whisper_feature = self.audio_encoder.audio2feat(audio_samples)
             whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
             target_frame_num = len(whisper_chunks)
-        
-        video_fps = video_fps * self.rife.multi
+
+        if self.rife: 
+            video_fps = video_fps * self.rife.multi
         synced_video_frames = []
 
         # audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)
@@ -1645,7 +1757,8 @@ class LipsyncPipeline(DiffusionPipeline):
             callback=callback,
             callback_steps=callback_steps, **kwargs,
         )
-        # frames_gen = self.rife.inference(frames_gen)
+        if self.rife:
+            frames_gen = self.rife.inference(frames_gen)
         for ni, out_frame in enumerate(frames_gen):
             # out_frame, audio_data = frame_data
 

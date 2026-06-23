@@ -62,7 +62,7 @@ class VideoWriter:
             },
         ],
         "mp4": [
-            "mp4"
+            "mp4",
             "yuv420p",
             "libx264",
             "aac",
@@ -71,7 +71,7 @@ class VideoWriter:
             },
         ],
         "flv": [
-            "mp4"
+            "mp4",
             "yuv420p",
             "h264",
             "aac",
@@ -97,7 +97,7 @@ class VideoWriter:
             self.pix_fmt,
             self.codec,
             self.audio_codec,
-            self.default_options,
+            self.default_options
         ) = self.vformat2codec[codec_info]
 
         self.audio_stream = None
@@ -105,6 +105,10 @@ class VideoWriter:
     def init_stream(self, frame_data, audio_data, fps, sample_rate):
         # 视频流配置
         height, width, vchannels = frame_data.shape
+        if self.codec == "libx264":
+            height = height + (height % 2)
+            width = width + (width % 2)
+        # 确保宽度和高度为偶数（libx264要求）
         self.video_stream = self.container.add_stream(self.codec, rate=fps)
         self.video_stream.width = width
         self.video_stream.height = height
@@ -150,6 +154,7 @@ class VideoWriter:
         # print(f"{frame_data.shape=},{audio_data.shape=}")
         # 创建 AVFrame
         # print(f"{self.vformat=}")
+
         av_frame = av.VideoFrame.from_ndarray(frame_data, format=self.vformat)
         # 设置时间戳
         av_frame.pts = video_pts

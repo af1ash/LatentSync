@@ -1099,6 +1099,8 @@ class LipsyncPipeline(DiffusionPipeline):
                     org_frame = next(candidate_geneter)
                 if org_frame.shape[-1] == 4:
                     frame_rgb = org_frame[:, :, :3]
+                else:
+                    frame_rgb = org_frame
                     # alpha = orgframe[:, :, 3]
                     # bg_r, bg_g, bg_b = 0, 255, 0
                     # alpha_normal = alpha.astype(float) / 255.0

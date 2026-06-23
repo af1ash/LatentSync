@@ -1098,7 +1098,7 @@ class LipsyncPipeline(DiffusionPipeline):
                     candidate_geneter = candidate_frames.read_iter()
                     org_frame = next(candidate_geneter)
                 if org_frame.shape[-1] == 4:
-                    org_frame = org_frame[:, :, :3]
+                    frame_rgb = org_frame[:, :, :3]
                     # alpha = orgframe[:, :, 3]
                     # bg_r, bg_g, bg_b = 0, 255, 0
                     # alpha_normal = alpha.astype(float) / 255.0
@@ -1109,13 +1109,13 @@ class LipsyncPipeline(DiffusionPipeline):
                     # orgframe = orgframe[:, :, :3]
                     # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
 
-                results = self.yolopose(org_frame, verbose=False)
+                results = self.yolopose(frame_rgb, verbose=False)
 
                 keypoints = results[0].keypoints.xy[0].cpu().numpy()  # (17, 2)
                 confidences = results[0].keypoints.conf[0].cpu().numpy()  # (17,)
-                hbbox = self.get_head_bbox(keypoints, confidences, org_frame.shape)
+                hbbox = self.get_head_bbox(keypoints, confidences, frame_rgb.shape)
                 x1, y1, x2, y2 = hbbox
-                crop_frame = org_frame[y1:y2, x1:x2]
+                crop_frame = frame_rgb[y1:y2, x1:x2]
 
                 candidate_frame = self.affine_transform_face(crop_frame, gi, one_euro_filter)
                 candidate_frame["input_img"] = org_frame

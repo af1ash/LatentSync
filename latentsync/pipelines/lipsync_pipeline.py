@@ -11,6 +11,7 @@ import subprocess
 
 import cv2
 import numpy as np
+import librosa
 import torch
 import torchvision
 from torchvision import transforms
@@ -925,15 +926,6 @@ class LipsyncPipeline(DiffusionPipeline):
             
         current_time = time.time()
         if one_euro:
-            # smoothed_landmarks = np.zeros_like(landmark_2d_106)
-            # for j in [43, 48, 49, 51, 50, 74, 77, 83, 86, 101, 102, 103, 104, 105]:
-            #     if pti == 0:
-            #         curfilter = OneEuroFilter(current_time, landmark_2d_106[j], min_cutoff=0.01, beta=0.8)
-            #         # filters.append(curfilter)
-            #         filters[j] = curfilter
-            #         smoothed_landmarks[j] = landmark_2d_106[j]
-            #     else:
-            #         smoothed_landmarks[j] = filters[j](current_time, landmark_2d_106[j])
             smoothed_landmarks = one_euro.filter(landmark_2d_106, timestamp=current_time)
             landmark_2d_106 = smoothed_landmarks
         # org_video_frames.append(frame)
@@ -947,19 +939,9 @@ class LipsyncPipeline(DiffusionPipeline):
         landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
         landmarks3 = landmarks3.astype(np.int32)
         if one_euro:
-        #     smoothed_landmarks = np.zeros_like(landmarks3)
-        #     for j in range(3):
-        #         if pti == 0:
-        #             curfilter = OneEuroFilter(current_time, landmarks3[j], min_cutoff=0.01, beta=0.012)
-        #             # filters.append(curfilter)
-        #             filters3[j] = curfilter
-        #             smoothed_landmarks[j] = landmarks3[j]
-        #         else:
-        #             smoothed_landmarks[j] = filters3[j](current_time, landmarks3[j])
-        #     landmarks3 = smoothed_landmarks
             smoothed_landmarks = one_euro.filter(landmarks3, timestamp=current_time)
             landmarks3= smoothed_landmarks
-        face, affine_matrix = self.image_processor.restorer.align_warp_face(orgframe.copy(), landmarks3=landmarks3, smooth=False)
+        face, affine_matrix = self.image_processor.restorer.align_warp_face(orgframe.copy(), landmarks3=landmarks3, smooth=True)
         box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
         face = cv2.resize(face, (self.image_processor.resolution, self.image_processor.resolution), interpolation=cv2.INTER_LANCZOS4)
         face = rearrange(torch.from_numpy(face), "h w c -> c h w")
@@ -1770,6 +1752,22 @@ class LipsyncPipeline(DiffusionPipeline):
         if strict == "video":
             target_frame_num = vr.frames
             audio_samples = vr.read(type_="audio")
+
+            # 假设 audio 是已经读取的 NumPy 数组，原始采样率为 48000
+            # audio.shape = (samples,) 或 (channels, samples)
+            orig_sr = vr.sample_rate
+            target_sr = 16000
+            if orig_sr != target_sr:
+                # 1. 如果是多声道（例如立体声），需要沿通道轴分别处理
+                if audio_samples.ndim == 2:
+                    # shape: (channels, samples) -> 对每个通道重采样
+                    audio_samples = np.array([
+                        librosa.resample(audio_samples[ch], orig_sr=orig_sr, target_sr=target_sr)
+                        for ch in range(audio_samples.shape[0])
+                    ])
+                else:
+                    # 单声道
+                    audio_samples = librosa.resample(audio_samples, orig_sr=orig_sr, target_sr=target_sr)
             audio_samples = audio_samples.astype(np.float32)[0]
             whisper_feature = self.audio_encoder.audio2feat(audio_samples)
             whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)

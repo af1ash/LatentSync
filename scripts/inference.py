@@ -29,6 +29,36 @@ from facelib.utils.face_restoration_helper import FaceRestoreHelper
 from Practical_RIFE.RIFE_HDv3 import RIFE
 from ultralytics import YOLO
 
+def set_realesrgan():
+    from basicsr.archs.rrdbnet_arch import RRDBNet
+    from basicsr.utils.realesrgan_utils import RealESRGANer
+
+    use_half = False
+    if torch.cuda.is_available(): # set False in CPU/MPS mode
+        no_half_gpu_list = ['1650', '1660'] # set False for GPUs that don't support f16
+        if not True in [gpu in torch.cuda.get_device_name(0) for gpu in no_half_gpu_list]:
+            use_half = True
+
+    model = RRDBNet(
+        num_in_ch=3,
+        num_out_ch=3,
+        num_feat=64,
+        num_block=23,
+        num_grow_ch=32,
+        scale=2,
+    )
+    upsampler = RealESRGANer(
+        scale=2,
+        model_path="https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/RealESRGAN_x2plus.pth",
+        model=model,
+        tile=400,
+        tile_pad=40,
+        pre_pad=0,
+        half=use_half
+    )
+
+    return upsampler
+
 
 def main(config, args):
     if not os.path.exists(args.video_path):
@@ -76,6 +106,7 @@ def main(config, args):
 
     gfpgan = None
     face_helper = None
+    face_upsampler = None
     if not args.disable_codeformer:
         pretrain_model_url = {
             'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
@@ -101,6 +132,9 @@ def main(config, args):
             model_dir=model_dir
         )
 
+        # bg_upsampler = set_realesrgan()
+        face_upsampler = set_realesrgan()
+
     rife = None
     if args.fps > 25:
         if args.UHD:
@@ -122,7 +156,8 @@ def main(config, args):
         gfpgan=gfpgan,
         facehelper=face_helper,
         rife=rife,
-        yolopose=yolopose
+        yolopose=yolopose,
+        face_upsampler=face_upsampler
     ).to("cuda")
 
     # use DeepCache
@@ -173,7 +208,7 @@ if __name__ == "__main__":
     parser.add_argument('--detection_model', type=str, default='retinaface_resnet50', 
             help='Face detector. Optional: retinaface_resnet50, retinaface_mobile0.25, YOLOv5l, YOLOv5n, dlib. \
                 Default: retinaface_resnet50')
-    parser.add_argument('-s', '--upscale', type=int, default=1, 
+    parser.add_argument('-s', '--upscale', type=int, default=2, 
             help='The final upsampling scale of the image. Default: 2')
     parser.add_argument('--fp16', dest='fp16', action='store_true', help='fp16 mode for faster and more lightweight inference on cards with Tensor Cores')
     parser.add_argument('--UHD', dest='UHD', action='store_true', help='support 4k video')

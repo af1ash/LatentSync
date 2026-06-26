@@ -169,7 +169,8 @@ class LipsyncPipeline(DiffusionPipeline):
         gfpgan=None,
         facehelper=None,
         rife=None,
-        yolopose=None
+        yolopose=None,
+        face_upsampler=None
     ):
         super().__init__()
 
@@ -235,6 +236,7 @@ class LipsyncPipeline(DiffusionPipeline):
         self.facehelper = facehelper
         self.rife = rife
         self.yolopose = yolopose
+        self.face_upsampler = face_upsampler
 
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
@@ -643,11 +645,19 @@ class LipsyncPipeline(DiffusionPipeline):
         bg_img = None
         self.facehelper.get_inverse_affine(None)
         # paste each restored face to the input image
-        # if args.face_upsample and face_upsampler is not None: 
-        #     restored_img = face_helper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=args.draw_box, face_upsampler=face_upsampler)
-        # else:
-        restored_img = self.facehelper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=False)
-        return restored_img
+        if self.face_upsampler is not None: 
+            restored_img = self.facehelper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=False, face_upsampler=self.face_upsampler)
+        else:
+            restored_img = self.facehelper.paste_faces_to_input_image(upsample_img=bg_img, draw_box=False)
+        # 计算新的尺寸
+        width = int(restored_img.shape[1] / self.facehelper.upscale_factor)
+        height = int(restored_img.shape[0] / self.facehelper.upscale_factor)
+        new_dim = (width, height)
+
+        # 执行缩放，使用 INTER_AREA 插值方法，适合缩小图像
+        resized = cv2.resize(restored_img, new_dim, interpolation=cv2.INTER_AREA)
+
+        return resized
 
     def affine_transform_video1(self, video_frames: np.ndarray, frame_num=None, stopat=None):
         faces = []

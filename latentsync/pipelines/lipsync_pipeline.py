@@ -1437,7 +1437,7 @@ class LipsyncPipeline(DiffusionPipeline):
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
-                    out_frame = self.face_enhance1(out_frame.copy())
+                    out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)
@@ -1679,7 +1679,7 @@ class LipsyncPipeline(DiffusionPipeline):
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
-                    out_frame = self.face_enhance1(out_frame.copy())
+                    out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)

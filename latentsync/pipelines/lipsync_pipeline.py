@@ -1497,6 +1497,46 @@ class LipsyncPipeline(DiffusionPipeline):
         del whisper_feature
         del whisper_chunks
 
+    def concat_debug_image(self, out_image, vframe_info):
+
+        input_img = vframe_info["input_img"].copy()
+        alpha = None
+        if input_img.shape[-1] == 4:
+            if not (
+                np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)
+            ):
+                alpha = input_img[:, :, 3]
+            frame_rgb = input_img[:, :, :3]
+        else:
+            frame_rgb = input_img
+        headbbox = vframe_info["headbbox"]
+        x1, y1, x2, y2 = headbbox
+        # head and keypoints
+        cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        facebbox = vframe_info["fbbox"]
+        fx1, fy1, fx2, fy2 = facebbox
+        cv2.rectangle(frame_rgb, (fx1+x1, fy1+y1), (fx2+x1, fy2+y1), (255, 0, 0), 2)
+
+        landmarks3 = vframe_info["landmark3"]
+        for point in landmarks3:
+            x, y = point
+            cv2.circle(frame_rgb, (x+x1, y+y1), 1, (255, 0, 0), -1)  # 使用红色标记点
+        landmarks106 = vframe_info["landmark_2d_106"]
+        landmarks106 = landmarks106.astype(np.int32)
+        for point in landmarks106:
+            x, y = point
+            cv2.circle(frame_rgb, (x+x1, y+y1), 1, (0, 0, 200), -1)  # 使用红色标记点
+
+        if alpha is not None:
+            frame_rgb = cv2.merge([
+                frame_rgb[:, :, 0],
+                frame_rgb[:, :, 1],
+                frame_rgb[:, :, 2],
+                alpha,
+            ])
+        out_frame = np.concatenate((out_image, frame_rgb), axis=1)
+        return out_frame
+
     @torch.no_grad()
     def lipsync(
         self,
@@ -1522,6 +1562,7 @@ class LipsyncPipeline(DiffusionPipeline):
     ):
         # is_train = self.unet.training
         # self.unet.eval()
+        debug = kwargs.get("debug", False)
 
         # check_ffmpeg_installed()
 
@@ -1715,8 +1756,8 @@ class LipsyncPipeline(DiffusionPipeline):
                         frame_rgb[:, :, 2],
                         alpha,
                     ])
-
-                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                if debug:
+                    frame_rgb = self.concat_debug_image(frame_rgb, vframe_batch[index])
                 yield frame_rgb
 
 

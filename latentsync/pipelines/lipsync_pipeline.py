@@ -939,14 +939,14 @@ class LipsyncPipeline(DiffusionPipeline):
             smoothed_landmarks = one_euro.filter(landmark_2d_106, timestamp=current_time)
             landmark_2d_106 = smoothed_landmarks
         # org_video_frames.append(frame)
-        # pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
-        # pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
-        # pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+        pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+        pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
+        pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
+        landmarks3 = np.round([pt_left_eye, pt_right_eye, pt_nose])
+        # pt_left_eye = np.mean(landmark_2d_106[[43, 44, 45,46, 47, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+        # pt_right_eye = np.mean(landmark_2d_106[[97, 98, 99, 100, 101,102, 103, 104, 105]], axis=0)  # right eyebrow center
+        # pt_nose = np.mean(landmark_2d_106[[74, 76, 77, 78, 79, 80, 82, 83, 84, 85, 86]], axis=0)  # nose center
         # landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
-        pt_left_eye = np.mean(landmark_2d_106[[43, 44, 45,46, 47, 48, 49, 51, 50]], axis=0)  # left eyebrow center
-        pt_right_eye = np.mean(landmark_2d_106[[97, 98, 99, 100, 101,102, 103, 104, 105]], axis=0)  # right eyebrow center
-        pt_nose = np.mean(landmark_2d_106[[74, 76, 77, 78, 79, 80, 82, 83, 84, 85, 86]], axis=0)  # nose center
-        landmarks3 = np.array([pt_left_eye, pt_right_eye, pt_nose])
         landmarks3 = landmarks3.astype(np.int32)
         if one_euro:
             smoothed_landmarks = one_euro.filter(landmarks3, timestamp=current_time)
@@ -1033,7 +1033,7 @@ class LipsyncPipeline(DiffusionPipeline):
         返回: (x1, y1, x2, y2) 裁剪框坐标（像素），若无法检测则返回 None
         """
         h, w = image_shape[:2]
-        PADDING_RATIO = 0.2                # 裁剪框向外扩展比例（防止头部边缘被切）
+        PADDING_RATIO = 0                # 裁剪框向外扩展比例（防止头部边缘被切）
         CONFIDENCE_THRESHOLD = 0.5         # 关键点置信度阈值
         SHOULDER_INDICES = [5, 6]   # 左肩、右肩
         HEAD_INDICES = [0, 1, 2, 3, 4]  # 鼻子、双眼、双耳（用于辅助定位头部中心）
@@ -1716,6 +1716,7 @@ class LipsyncPipeline(DiffusionPipeline):
                         alpha,
                     ])
 
+                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
                 yield frame_rgb
 
 

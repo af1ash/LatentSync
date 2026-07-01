@@ -1563,7 +1563,8 @@ class LipsyncPipeline(DiffusionPipeline):
         # is_train = self.unet.training
         # self.unet.eval()
         debug = kwargs.get("debug", False)
-
+        if debug:
+            print("enable debug info in out video")
         # check_ffmpeg_installed()
 
         # 0. Define call parameters

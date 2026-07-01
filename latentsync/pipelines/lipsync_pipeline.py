@@ -1506,9 +1506,9 @@ class LipsyncPipeline(DiffusionPipeline):
                 np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)
             ):
                 alpha = input_img[:, :, 3]
-            frame_rgb = input_img[:, :, :3]
+            frame_rgb = input_img[:, :, :3].astype(np.uint8)
         else:
-            frame_rgb = input_img
+            frame_rgb = input_img.astype(np.uint8)
         headbbox = vframe_info["headbbox"]
         x1, y1, x2, y2 = headbbox
         # head and keypoints

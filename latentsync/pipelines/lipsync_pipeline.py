@@ -1432,11 +1432,11 @@ class LipsyncPipeline(DiffusionPipeline):
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
 
-                out_frame = self.boxblur(out_frame, radius=1)
                 if self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
+                    out_frame = self.boxblur(out_frame, radius=1)
                     out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:

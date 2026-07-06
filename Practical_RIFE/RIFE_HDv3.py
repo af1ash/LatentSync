@@ -152,7 +152,7 @@ class RIFE:
         for lastframe in frames:
             if list(lastframe.shape)[-1] == 4:
                 lastframe = lastframe[:, :, :3]
-            lastframe = cv2.cvtColor(lastframe, cv2.COLOR_RGB2BGR)
+            # lastframe = cv2.cvtColor(lastframe, cv2.COLOR_RGB2BGR)
             yield lastframe
 
 
@@ -227,10 +227,10 @@ class RIFE:
                     mid = (((mid[0] * 255.).byte().cpu().numpy().transpose(1, 2, 0)))
                     yield np.concatenate((lastframe, mid[:h, :w]), 1)
             else:
-                yield cv2.cvtColor(lastframe, cv2.COLOR_BGR2RGB) 
+                yield lastframe
                 for mid in output:
                     mid = (((mid[0] * 255.).byte().cpu().numpy().transpose(1, 2, 0)))
-                    yield cv2.cvtColor(mid[:h, :w], cv2.COLOR_BGR2RGB)
+                    yield mid[:h, :w]
 
             lastframe = frame
             if break_flag:

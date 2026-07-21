@@ -1124,7 +1124,7 @@ class LipsyncPipeline(DiffusionPipeline):
         face_batch = []
         vframe_batch = []
         gi = 0
-        candidate_geneter = candidate_frames.read_iter()
+        # candidate_geneter = candidate_frames.read_iter()
         # one_euro_filter = OneEuroFilter(freq=25, min_cutoff=0.01, beta=0.012, d_cutoff=1.0)
         one_euro_filter = None
         for i in range(inf_step):
@@ -1136,11 +1136,21 @@ class LipsyncPipeline(DiffusionPipeline):
 
             for j in range(batch_len):
                 # candidate_frame = self.get_frame_data_by_index(gi, candidate_frames)
+                # try:
+                #     org_frame = next(candidate_geneter)
+                # except StopIteration:
+                #     candidate_geneter = candidate_frames.read_iter()
+                #     org_frame = next(candidate_geneter)
                 try:
-                    org_frame = next(candidate_geneter)
+                    org_frame = next(candidate_frames)
+                    org_frame = org_frame["video"]
                 except StopIteration:
-                    candidate_geneter = candidate_frames.read_iter()
-                    org_frame = next(candidate_geneter)
+                    return (
+                        whisper_batch,
+                        face_batch,
+                        vframe_batch,
+                        audio_batchs,
+                    )
                 if org_frame.shape[-1] == 4:
                     frame_rgb = org_frame[:, :, :3]
                 else:
@@ -1570,7 +1580,11 @@ class LipsyncPipeline(DiffusionPipeline):
         # 0. Define call parameters
         device = self._execution_device
         mask_image = load_fixed_mask(height, mask_image_path)
-        self.image_processor = ImageProcessor(height, device="cuda", mask_image=mask_image)
+        model_dir = kwargs.get("model_dir", "checkpoints")
+        self.image_processor = ImageProcessor(
+            height, device="cuda", 
+            mask_image=mask_image, model_dir=f"{model_dir}/auxiliary"
+        )
         self.set_progress_bar_config(desc=f"Sample frames: {num_frames}")
 
         # 1. Default height and width to unet
@@ -1744,23 +1758,34 @@ class LipsyncPipeline(DiffusionPipeline):
                         np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)
                     ):
                         alpha = input_img[:, :, 3]
-                    frame_rgb = input_img[:, :, :3]
+                    frame_bgr = input_img[:, :, :3]
                 else:
-                    frame_rgb = input_img
+                    frame_bgr = input_img
                 headbbox = vframe_batch[index]["headbbox"]
                 x1, y1, x2, y2 = headbbox
-                frame_rgb[y1:y2, x1:x2] = out_frame
+                frame_bgr[y1:y2, x1:x2] = out_frame
                 if alpha is not None:
-                    frame_rgb = cv2.merge([
-                        frame_rgb[:, :, 0],
-                        frame_rgb[:, :, 1],
-                        frame_rgb[:, :, 2],
+                    frame_bgr = cv2.merge([
+                        frame_bgr[:, :, 0],
+                        frame_bgr[:, :, 1],
+                        frame_bgr[:, :, 2],
                         alpha,
                     ])
                 if debug:
-                    frame_rgb = self.concat_debug_image(frame_rgb, vframe_batch[index])
-                yield frame_rgb
-
+                    frame_bgr = self.concat_debug_image(frame_bgr, vframe_batch[index])
+                yield frame_bgr
+    
+    def get_candidate_frames(self, frame_count, vr):
+        count = 0
+        candidate_geneter = vr.read_iter()
+        while count < frame_count:
+            try:
+                org_frame = next(candidate_geneter)
+            except StopIteration:
+                candidate_geneter = vr.read_iter()
+                org_frame = next(candidate_geneter)
+            yield {"video": org_frame}
+            count += 1
 
     @torch.no_grad()
     def stream1(
@@ -1787,11 +1812,11 @@ class LipsyncPipeline(DiffusionPipeline):
         is_train = self.unet.training
         self.unet.eval()
 
-        audio_samples = read_audio(audio_path)
-        audio_samples = audio_samples.numpy().astype(np.float32)
+        # audio_samples = read_audio(audio_path)
+        # audio_samples = audio_samples.numpy().astype(np.float32)
         # audio_samples = audio_samples * 0.00001
         # video_frames = read_video(video_path, use_decord=False)
-        vr = VideoReader(video_path)
+        # vr = VideoReader(video_path)
         # audio_samples = vr.read(type_="audio")
         # audio_samples = audio_samples.astype(np.float32)[0]
         # video_frame_generater = vr.read_iter()
@@ -1800,36 +1825,74 @@ class LipsyncPipeline(DiffusionPipeline):
         # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
         # audio_samples = vr.read(type_="audio")
         # audio_samples = audio_samples.astype(np.float32)[0]
-
-        strict = kwargs.get("strict", "audio")
-        if strict == "video":
-            target_frame_num = vr.frames
-            audio_samples = vr.read(type_="audio")
-
-            # 假设 audio 是已经读取的 NumPy 数组，原始采样率为 48000
-            # audio.shape = (samples,) 或 (channels, samples)
-            orig_sr = vr.sample_rate
-            target_sr = 16000
-            if orig_sr != target_sr:
-                # 1. 如果是多声道（例如立体声），需要沿通道轴分别处理
-                if audio_samples.ndim == 2:
-                    # shape: (channels, samples) -> 对每个通道重采样
-                    audio_samples = np.array([
-                        librosa.resample(audio_samples[ch], orig_sr=orig_sr, target_sr=target_sr)
-                        for ch in range(audio_samples.shape[0])
-                    ])
-                else:
-                    # 单声道
-                    audio_samples = librosa.resample(audio_samples, orig_sr=orig_sr, target_sr=target_sr)
-            audio_samples = audio_samples.astype(np.float32)[0]
-            whisper_feature = self.audio_encoder.audio2feat(audio_samples)
-            whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
-        else:
+        avatar = kwargs.get("avatar")
+        if avatar:
             audio_samples = read_audio(audio_path)
             audio_samples = audio_samples.numpy().astype(np.float32)
-            whisper_feature = self.audio_encoder.audio2feat(audio_samples)
-            whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
-            target_frame_num = len(whisper_chunks)
+            audio_frame_num = int(len(audio_samples) / audio_sample_rate * video_fps) + 2
+            if audio_frame_num < avatar.move_frames_count:
+                # 音频比视频帧数少
+                silence_samples = int(
+                    (avatar.move_frames_count - audio_frame_num)
+                    / video_fps
+                    * audio_sample_rate
+                )
+                if audio_samples.ndim == 1:  # 单声道
+                    silence = np.zeros(silence_samples, dtype=audio_samples.dtype)
+                elif audio_samples.ndim == 2:  # 立体声 (samples, channels)
+                    silence = np.zeros(
+                        (silence_samples, audio_samples.shape[1]),
+                        dtype=audio_samples.dtype,
+                    )
+                else:
+                    raise ValueError("不支持的音频维度，仅支持单声道或立体声")
+                # 4. 拼接原音频和静音
+                audio_samples = np.concatenate((audio_samples, silence), axis=0)
+                target_frame_num = avatar.move_frames_count
+            else:
+                target_frame_num = audio_frame_num
+            strict = None
+            frame_gen = avatar.get_candidate_frames(
+                target_frame_num,
+                [],
+                0,
+                None,
+                fps=video_fps,
+                onlymerge=False,
+            )
+        else:
+            vr = VideoReader(video_path)
+            strict = kwargs.get("strict", "audio")
+            if strict == "video":
+                target_frame_num = vr.frames
+                audio_samples = vr.read(type_="audio")
+
+                # 假设 audio 是已经读取的 NumPy 数组，原始采样率为 48000
+                # audio.shape = (samples,) 或 (channels, samples)
+                orig_sr = vr.sample_rate
+                target_sr = 16000
+                if orig_sr != target_sr:
+                    # 1. 如果是多声道（例如立体声），需要沿通道轴分别处理
+                    if audio_samples.ndim == 2:
+                        # shape: (channels, samples) -> 对每个通道重采样
+                        audio_samples = np.array([
+                            librosa.resample(audio_samples[ch], orig_sr=orig_sr, target_sr=target_sr)
+                            for ch in range(audio_samples.shape[0])
+                        ])
+                    else:
+                        # 单声道
+                        audio_samples = librosa.resample(audio_samples, orig_sr=orig_sr, target_sr=target_sr)
+                audio_samples = audio_samples.astype(np.float32)[0]
+                # whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+                # whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
+            else:
+                audio_samples = read_audio(audio_path)
+                audio_samples = audio_samples.numpy().astype(np.float32)
+                target_frame_num = int(len(audio_samples) / audio_sample_rate * video_fps) + 2
+            frame_gen = self.get_candidate_frames(target_frame_num, vr)
+        
+        whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+        whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
         if self.rife: 
             video_fps = video_fps * self.rife.multi
@@ -1846,7 +1909,7 @@ class LipsyncPipeline(DiffusionPipeline):
         num_inferences = math.ceil(target_frame_num / num_frames)
 
         frames_gen = self.lipsync(
-            num_inferences, audio_samples, whisper_chunks, vr, 
+            num_inferences, audio_samples, whisper_chunks, frame_gen, 
             audio_chunk_size, audio_channel,
             num_frames=num_frames,
             height=height,

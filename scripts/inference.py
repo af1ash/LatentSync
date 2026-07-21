@@ -98,16 +98,16 @@ def main(config, args):
     unet, _ = UNet3DConditionModel.from_pretrained(
         OmegaConf.to_container(config.model),
         args.inference_ckpt_path,
-        device="cpu",
+        device="cuda",
     )
 
     unet = unet.to(dtype=dtype)
-    device = "cuda"
 
     gfpgan = None
     face_helper = None
     face_upsampler = None
     if not args.disable_codeformer:
+        device = "cuda"
         pretrain_model_url = {
             'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
         }

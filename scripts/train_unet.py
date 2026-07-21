@@ -245,6 +245,8 @@ def main(config):
         logger.info(f"  Instantaneous batch size per device = {config.data.batch_size}")
         logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
         logger.info(f"  Total optimization steps = {config.run.max_train_steps}")
+        model_loaded_memeory = torch.cuda.memory_allocated() / 1024**3      # GB
+        logger.info(f"  {model_loaded_memeory=:.2f} GB")
     global_step = resume_global_step
     first_epoch = resume_global_step // num_update_steps_per_epoch
 
@@ -430,6 +432,9 @@ def main(config):
 
             optimizer.zero_grad()
 
+            memory_before_backward = torch.cuda.memory_allocated()
+            logger.info(f"{memory_before_backward=}")
+
             # Backpropagate
             if config.run.mixed_precision_training:
                 scaler.scale(loss).backward()
@@ -446,6 +451,8 @@ def main(config):
                 """ <<< gradient clipping <<< """
                 optimizer.step()
 
+            peak_memory = torch.cuda.max_memory_allocated()
+            logger.info(f"{peak_memory=}")
             # Check the grad of attn blocks for debugging
             # print(unet.module.up_blocks[3].attentions[2].transformer_blocks[0].attn2.to_q.weight.grad)
 

@@ -23,9 +23,6 @@ from accelerate.utils import set_seed
 from latentsync.whisper.audio2feature import Audio2Feature
 from DeepCache import DeepCacheSDHelper
 
-from basicsr.utils.download_util import load_file_from_url
-from basicsr.utils.registry import ARCH_REGISTRY
-from facelib.utils.face_restoration_helper import FaceRestoreHelper
 from Practical_RIFE.RIFE_HDv3 import RIFE
 from ultralytics import YOLO
 
@@ -98,42 +95,95 @@ def main(config, args):
     unet, _ = UNet3DConditionModel.from_pretrained(
         OmegaConf.to_container(config.model),
         args.inference_ckpt_path,
-        device="cuda",
+        device="cpu",
     )
 
     unet = unet.to(dtype=dtype)
+    device = "cuda"
 
     gfpgan = None
     face_helper = None
     face_upsampler = None
     if not args.disable_codeformer:
-        device = "cuda"
-        pretrain_model_url = {
-            'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
-        }
-        net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
-                                                connect_list=['32', '64', '128', '256']).to(device)
-    
-        # ckpt_path = 'weights/CodeFormer/codeformer.pth'
-        ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
-                                        model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
-        checkpoint = torch.load(ckpt_path)['params_ema']
-        net.load_state_dict(checkpoint)
-        net.eval()
-        gfpgan = net
-        face_helper = FaceRestoreHelper(
-            args.upscale,
-            face_size=512,
-            crop_ratio=(1, 1),
-            det_model = args.detection_model,
-            save_ext='png',
-            use_parse=True,
-            device=device,
-            model_dir=model_dir
-        )
+        if args.face_restore == "gfpgan":
+            from gfpgan import GFPGANer
+            # ------------------------ set up GFPGAN restorer ------------------------
+            if args.version == '1':
+                arch = 'original'
+                channel_multiplier = 1
+                model_name = 'GFPGANv1'
+                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v0.1.0/GFPGANv1.pth'
+            elif args.version == '1.2':
+                arch = 'clean'
+                channel_multiplier = 2
+                model_name = 'GFPGANCleanv1-NoCE-C2'
+                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v0.2.0/GFPGANCleanv1-NoCE-C2.pth'
+            elif args.version == '1.3':
+                arch = 'clean'
+                channel_multiplier = 2
+                model_name = 'GFPGANv1.3'
+                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth'
+            elif args.version == '1.4':
+                arch = 'clean'
+                channel_multiplier = 2
+                model_name = 'GFPGANv1.4'
+                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth'
+            elif args.version == 'RestoreFormer':
+                arch = 'RestoreFormer'
+                channel_multiplier = 2
+                model_name = 'RestoreFormer'
+                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth'
+            else:
+                raise ValueError(f'Wrong model version {args.version}.')
 
-        # bg_upsampler = set_realesrgan()
-        face_upsampler = set_realesrgan()
+            # determine model paths
+            model_path = os.path.join('experiments/pretrained_models', model_name + '.pth')
+            if not os.path.isfile(model_path):
+                # model_path = os.path.join('gfpgan/weights', model_name + '.pth')
+                model_path = os.path.join(f'{model_dir}/gfpgan_weights', model_name + '.pth')
+            if not os.path.isfile(model_path):
+                # download pre-trained models from url
+                model_path = url
+            bg_upsampler = None
+            # bg_upsampler = set_realesrgan()
+            gfpgan = GFPGANer(
+                model_path=model_path,
+                upscale=args.upscale,
+                arch=arch,
+                channel_multiplier=channel_multiplier,
+                bg_upsampler=bg_upsampler,
+                model_dir=model_dir
+                )
+            face_helper = None
+        elif args.face_restore == "codeformer":
+            from basicsr.utils.download_util import load_file_from_url
+            from basicsr.utils.registry import ARCH_REGISTRY
+            from facelib.utils.face_restoration_helper import FaceRestoreHelper
+            pretrain_model_url = {
+                'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
+            }
+            net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
+                                                    connect_list=['32', '64', '128', '256']).to(device)
+    
+            # ckpt_path = 'weights/CodeFormer/codeformer.pth'
+            ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
+                                            model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
+            checkpoint = torch.load(ckpt_path)['params_ema']
+            net.load_state_dict(checkpoint)
+            net.eval()
+            gfpgan = net
+            face_helper = FaceRestoreHelper(
+                args.upscale,
+                face_size=512,
+                crop_ratio=(1, 1),
+                det_model = args.detection_model,
+                save_ext='png',
+                use_parse=True,
+                device=device,
+                model_dir=model_dir
+            )
+
+            face_upsampler = set_realesrgan()
 
     rife = None
     if args.fps > 25:
@@ -188,7 +238,8 @@ def main(config, args):
         temp_dir=args.temp_dir,
         strict=args.strict,
         vformat=args.vformat,
-        debug=args.debug
+        debug=args.debug,
+        weight=args.weight
     )
 
 
@@ -209,8 +260,11 @@ if __name__ == "__main__":
     parser.add_argument('--detection_model', type=str, default='retinaface_resnet50', 
             help='Face detector. Optional: retinaface_resnet50, retinaface_mobile0.25, YOLOv5l, YOLOv5n, dlib. \
                 Default: retinaface_resnet50')
-    parser.add_argument('-s', '--upscale', type=int, default=2, 
-            help='The final upsampling scale of the image. Default: 2')
+    parser.add_argument('-s', '--upscale', type=int, default=1, 
+            help='The final upsampling scale of the image. Default: 1')
+    parser.add_argument(
+        '-v', '--version', type=str, default='1.4', help='GFPGAN model version. Option: 1 | 1.2 | 1.3. Default: 1.3')
+    parser.add_argument('-w', '--weight', type=float, default=0.95, help='Adjustable weights.')
     parser.add_argument('--fp16', dest='fp16', action='store_true', help='fp16 mode for faster and more lightweight inference on cards with Tensor Cores')
     parser.add_argument('--UHD', dest='UHD', action='store_true', help='support 4k video')
     parser.add_argument('--scale', dest='scale', type=float, default=1.0, help='Try scale=0.5 for 4k video')
@@ -218,6 +272,9 @@ if __name__ == "__main__":
     parser.add_argument('--exp', dest='exp', type=int, default=1)
     parser.add_argument('--multi', dest='multi', type=int, default=2)
     parser.add_argument('--disable_codeformer', dest='disable_codeformer', action='store_true', help='禁用面部增强')
+    parser.add_argument('--face_restore', type=str, default='codeformer', 
+            help='Face detector. Optional: codeformer, gfpgan.Default: codeformer')
+ 
     parser.add_argument('--withalpha', dest='withalpha', action='store_true', help='添加alpha通道')
     parser.add_argument('--debug', dest='debug', action='store_true', help='输出视频包含debug信息, 宽度增加1倍')
     parser.add_argument("--vformat", default="mp4", choices=["mp4", "mov_alpha", "mov", "webm", "mkv", "flv"], help="视频编码格式")

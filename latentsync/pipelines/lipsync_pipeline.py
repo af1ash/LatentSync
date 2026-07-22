@@ -1173,6 +1173,20 @@ class LipsyncPipeline(DiffusionPipeline):
                 x1, y1, x2, y2 = hbbox
                 crop_frame = frame_rgb[y1:y2, x1:x2]
 
+                if self.gfpgan:
+                    # out_frame = self.boxblur(out_frame, radius=1)
+                    # out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
+                    gframe = crop_frame.copy()
+                    _, _, new_gframe = self.gfpgan.enhance(
+                        gframe,
+                        has_aligned=False,
+                        only_center_face=True,
+                        paste_back=True,
+                        weight=0.95,
+                        bgr2rgb=False
+                        )
+                    crop_frame = new_gframe
+
                 candidate_frame = self.affine_transform_face(crop_frame, gi, one_euro_filter)
                 candidate_frame["input_img"] = org_frame
                 candidate_frame["headbbox"] = hbbox
@@ -1576,7 +1590,7 @@ class LipsyncPipeline(DiffusionPipeline):
         if debug:
             print("enable debug info in out video")
         # check_ffmpeg_installed()
-
+        weight = kwargs.get("weight", 0.95)
         # 0. Define call parameters
         device = self._execution_device
         mask_image = load_fixed_mask(height, mask_image_path)
@@ -1730,12 +1744,24 @@ class LipsyncPipeline(DiffusionPipeline):
                 oframe = vframe_batch[index]["video"]
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
-                if self.gfpgan:
+                if False and self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
-                    out_frame = self.boxblur(out_frame, radius=1)
-                    out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
+                    # gframe = cv2.cvtColor(out_frame.copy(), cv2.COLOR_RGB2BGR)
+                    # out_frame = self.boxblur(out_frame, radius=1)
+                    # out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
+                    # out_frame = cv2.cvtColor(new_gframe, cv2.COLOR_BGR2RGB)
+                    gframe = out_frame.copy()
+                    _, _, new_gframe = self.gfpgan.enhance(
+                        gframe,
+                        has_aligned=False,
+                        only_center_face=True,
+                        paste_back=True,
+                        weight=weight,
+                        bgr2rgb=False
+                        )
+                    out_frame = new_gframe
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)

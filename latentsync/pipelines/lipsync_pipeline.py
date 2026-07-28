@@ -1155,15 +1155,6 @@ class LipsyncPipeline(DiffusionPipeline):
                     frame_rgb = org_frame[:, :, :3]
                 else:
                     frame_rgb = org_frame
-                    # alpha = orgframe[:, :, 3]
-                    # bg_r, bg_g, bg_b = 0, 255, 0
-                    # alpha_normal = alpha.astype(float) / 255.0
-                    # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
-                    # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
-                    # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
-                    # image = np.stack([r_out, g_out, b_out], axis=-1)
-                    # orgframe = orgframe[:, :, :3]
-                    # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
 
                 results = self.yolopose(frame_rgb, verbose=False)
 
@@ -1197,23 +1188,23 @@ class LipsyncPipeline(DiffusionPipeline):
                 #     alpha_batch.append(alpha_img)
                 vframe_batch.append(candidate_frame)
 
-                audio_batch = audio_array[
-                    gi * audio_batch_size : (gi + 1)
-                    * audio_batch_size
-                ]
-                if len(audio_batch) < audio_batch_size:
-                    # 长度不够的时候, 补充静音
-                    audio_batch = np.pad(
-                        audio_batch,
-                        (0, audio_batch_size - len(audio_batch)),
-                        "constant",
-                        constant_values=0,
-                    )
-                    # audio_batch = torch.from_numpy(audio_batch)
+                # audio_batch = audio_array[
+                #     gi * audio_batch_size : (gi + 1)
+                #     * audio_batch_size
+                # ]
+                # if len(audio_batch) < audio_batch_size:
+                #     # 长度不够的时候, 补充静音
+                #     audio_batch = np.pad(
+                #         audio_batch,
+                #         (0, audio_batch_size - len(audio_batch)),
+                #         "constant",
+                #         constant_values=0,
+                #     )
+                #     # audio_batch = torch.from_numpy(audio_batch)
 
-                audio_batch = np.reshape(
-                    audio_batch, (audio_channel, len(audio_batch))
-                )
+                # audio_batch = np.reshape(
+                #     audio_batch, (audio_channel, len(audio_batch))
+                # )
                 # audio_batchs.append(audio_batch)
                 # if i < len(whisper_chunks):
                 #     whisper_batch.append(whisper_chunks[i])
@@ -1810,6 +1801,17 @@ class LipsyncPipeline(DiffusionPipeline):
             except StopIteration:
                 candidate_geneter = vr.read_iter()
                 org_frame = next(candidate_geneter)
+
+            # alpha = orgframe[:, :, 3]
+            # bg_r, bg_g, bg_b = 0, 255, 0
+            # alpha_normal = alpha.astype(float) / 255.0
+            # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+            # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+            # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+            # image = np.stack([r_out, g_out, b_out], axis=-1)
+            # orgframe = orgframe[:, :, :3]
+            # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
+
             yield {"video": org_frame}
             count += 1
 
@@ -1838,19 +1840,6 @@ class LipsyncPipeline(DiffusionPipeline):
         is_train = self.unet.training
         self.unet.eval()
 
-        # audio_samples = read_audio(audio_path)
-        # audio_samples = audio_samples.numpy().astype(np.float32)
-        # audio_samples = audio_samples * 0.00001
-        # video_frames = read_video(video_path, use_decord=False)
-        # vr = VideoReader(video_path)
-        # audio_samples = vr.read(type_="audio")
-        # audio_samples = audio_samples.astype(np.float32)[0]
-        # video_frame_generater = vr.read_iter()
-        # video_frames, faces, boxes, affine_matrices, fbboxs = self.loop_video1(whisper_chunks, video_frame_generater, vr.frames)
-        # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=len(whisper_chunks))
-        # source_frames = self.affine_transform_video2(video_frame_generater, vr.frames, stopat=None)
-        # audio_samples = vr.read(type_="audio")
-        # audio_samples = audio_samples.astype(np.float32)[0]
         avatar = kwargs.get("avatar")
         if avatar:
             audio_samples = read_audio(audio_path)
@@ -1909,8 +1898,6 @@ class LipsyncPipeline(DiffusionPipeline):
                         # 单声道
                         audio_samples = librosa.resample(audio_samples, orig_sr=orig_sr, target_sr=target_sr)
                 audio_samples = audio_samples.astype(np.float32)[0]
-                # whisper_feature = self.audio_encoder.audio2feat(audio_samples)
-                # whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
             else:
                 audio_samples = read_audio(audio_path)
                 audio_samples = audio_samples.numpy().astype(np.float32)
@@ -1924,8 +1911,6 @@ class LipsyncPipeline(DiffusionPipeline):
             video_fps = video_fps * self.rife.multi
         synced_video_frames = []
 
-        # audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)
-        # audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
         audio_chunk_size = int(audio_sample_rate / video_fps)
         audio_channel = 1
         video_out_path = Path(video_out_path)
@@ -1977,24 +1962,8 @@ class LipsyncPipeline(DiffusionPipeline):
             vwriter.encode_frame(out_frame, audio_data, video_pts=ni)
         vwriter.close()
 
-        # synced_video_frames = self.restore_video(torch.cat(synced_video_frames), video_frames, boxes, affine_matrices)
-
-        # audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
-        # audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
-
         if is_train:
             self.unet.train()
-
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        # os.makedirs(temp_dir, exist_ok=True)
-
-        # write_video(os.path.join(temp_dir, "video.mp4"), synced_video_frames, fps=video_fps)
-
-        # sf.write(os.path.join(temp_dir, "audio.wav"), audio_samples, audio_sample_rate)
-
-        # command = f"ffmpeg -y -loglevel error -nostdin -i {os.path.join(temp_dir, 'video.mp4')} -i {os.path.join(temp_dir, 'audio.wav')} -c:v libx264 -crf 18 -c:a aac -q:v 0 -q:a 0 {video_out_path}"
-        # subprocess.run(command, shell=True)
 
         # 训练过程中,为了避免内存溢出, 手动释放
         del synced_video_frames

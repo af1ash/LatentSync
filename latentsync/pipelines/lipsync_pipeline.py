@@ -1778,7 +1778,7 @@ class LipsyncPipeline(DiffusionPipeline):
                 #     cv2.circle(out_frame, (x, y), 1, (0, 255, 0), -1)  # 使用红色标记点
                 # x1, y1, x2, y2 = vframe_batch[index]['fbbox']
                 # cv2.rectangle(out_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                input_img = vframe_batch[index]["input_img"]
+                input_img = vframe_batch[index]["input_img"].copy()
                 if input_img.shape[-1] == 4:
                     if not (
                         np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)

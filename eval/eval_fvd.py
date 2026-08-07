@@ -19,7 +19,7 @@ import os
 import numpy as np
 import torch
 import tqdm
-from eval.fvd import compute_our_fvd
+from fvd import compute_our_fvd
 
 
 class FVD:

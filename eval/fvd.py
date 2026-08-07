@@ -4,13 +4,16 @@ from typing import Tuple
 import scipy
 import numpy as np
 import torch
-from latentsync.utils.util import check_model_and_download
+# from latentsync.utils.util import check_model_and_download
 
 
 def compute_fvd(feats_fake: np.ndarray, feats_real: np.ndarray) -> float:
+    print(f"{feats_fake.shape=},{feats_real.shape=}")
     mu_gen, sigma_gen = compute_stats(feats_fake)
     mu_real, sigma_real = compute_stats(feats_real)
 
+    print(f"{sigma_gen.shape=},{sigma_real.shape=}")
+    print(f"{sigma_gen=},{sigma_real=}")
     m = np.square(mu_gen - mu_real).sum()
     s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False)  # pylint: disable=no-member
     fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
@@ -27,8 +30,8 @@ def compute_stats(feats: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 @torch.no_grad()
 def compute_our_fvd(videos_fake: np.ndarray, videos_real: np.ndarray, device: str = "cuda") -> float:
-    i3d_path = "checkpoints/auxiliary/i3d_torchscript.pt"
-    check_model_and_download(i3d_path)
+    i3d_path = "../checkpoints/auxiliary/i3d_torchscript.pt"
+    # check_model_and_download(i3d_path)
     i3d_kwargs = dict(
         rescale=False, resize=False, return_features=True
     )  # Return raw features before the softmax layer.

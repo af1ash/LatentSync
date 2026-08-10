@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import argparse
 import mediapipe as mp
 import cv2
 from decord import VideoReader
@@ -24,7 +24,8 @@ from fvd import compute_our_fvd
 
 class FVD:
     def __init__(self, resolution=(224, 224)):
-        self.face_detector = mp.solutions.face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5)
+        # model_selection=0: 短距离内人脸 2米以内; model_selection=1: 全范围, 5米以内
+        self.face_detector = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
         self.resolution = resolution
 
     def detect_face(self, image):
@@ -58,6 +59,7 @@ class FVD:
         faces = []
         for frame in video_frames:
             face = self.detect_face(frame)
+            cv2.imwrite("face.png", face)
             face = cv2.resize(face, (self.resolution[1], self.resolution[0]), interpolation=cv2.INTER_AREA)
             faces.append(face)
 
@@ -93,6 +95,15 @@ def eval_fvd(real_videos_dir: str, fake_videos_dir: str):
 
 
 if __name__ == "__main__":
-    real_videos_dir = "dir1"
-    fake_videos_dir = "dir2"
-    eval_fvd(real_videos_dir, fake_videos_dir)
+    """
+    FVD 需要足够多的样本才能可靠估计协方差矩阵。至少需要样本数大于特征维度（通常建议 N >> D），否则协方差矩阵会奇异且不稳定。
+    在你的评估中，确保 real_videos 和 fake_videos 各包含 数十到上百个 视频样本。
+    如果你只想评估单个视频，可以采用 滑动窗口 或 片段采样 生成多个特征向量，但此时 FVD 的含义会有所不同。
+    """
+    parser = argparse.ArgumentParser(description="FVD")
+    parser.add_argument("--real_videos_dir", type=str, default="", help="")
+    parser.add_argument("--fake_videos_dir", type=str, default="")
+    args = parser.parse_args()
+    # real_videos_dir = "/home/lxb/workspace/LatentSync/data/256/segmented"
+    # fake_videos_dir = "/home/lxb/workspace/LatentSync/data/xiaowei256/segmented"
+    eval_fvd(args.real_videos_dir, args.fake_videos_dir)

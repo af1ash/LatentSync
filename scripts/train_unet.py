@@ -432,9 +432,6 @@ def main(config):
 
             optimizer.zero_grad()
 
-            memory_before_backward = torch.cuda.memory_allocated()
-            logger.info(f"{memory_before_backward=}")
-
             # Backpropagate
             if config.run.mixed_precision_training:
                 scaler.scale(loss).backward()
@@ -451,10 +448,6 @@ def main(config):
                 """ <<< gradient clipping <<< """
                 optimizer.step()
 
-            peak_memory = torch.cuda.max_memory_allocated()
-            logger.info(f"{peak_memory=}")
-            # Check the grad of attn blocks for debugging
-            # print(unet.module.up_blocks[3].attentions[2].transformer_blocks[0].attn2.to_q.weight.grad)
 
             lr_scheduler.step()
             progress_bar.update(1)
@@ -483,7 +476,7 @@ def main(config):
 
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
                     # pipeline(
-                    pipeline.stream(
+                    pipeline(
                         config.data.val_video_path,
                         config.data.val_audio_path,
                         validation_video_out_path,
@@ -513,9 +506,12 @@ def main(config):
                     )
                     writer.add_scalar('Sync confidence', conf, global_step)
 
+            vram = torch.cuda.max_memory_allocated()
             logs = {"step_loss": loss.item(), "epoch": epoch, 
                     "recon_loss": recon_loss.item(), "sync_loss": sync_loss.item(), 
-                    "lpips_loss": lpips_loss.item(), "trepa_loss": trepa_loss.item()}
+                    "lpips_loss": lpips_loss.item(), "trepa_loss": trepa_loss.item(),
+                    "vram": vram
+                    }
             progress_bar.set_postfix(**logs)
             writer.add_scalars('training loss', logs , global_step)
 

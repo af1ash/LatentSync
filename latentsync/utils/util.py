@@ -223,7 +223,8 @@ def check_video_fps(video_path: str):
 
 def one_step_sampling(ddim_scheduler, pred_noise, timesteps, x_t):
     # Compute alphas, betas
-    alpha_prod_t = ddim_scheduler.alphas_cumprod[timesteps].to(dtype=pred_noise.dtype)
+    alpha_prod_t = ddim_scheduler.alphas_cumprod.to(device=timesteps.device)[timesteps].to(dtype=pred_noise.dtype)
+    # alpha_prod_t = ddim_scheduler.alphas_cumprod[timesteps].to(dtype=pred_noise.dtype)
     beta_prod_t = 1 - alpha_prod_t
 
     # 3. compute predicted original sample from predicted noise also called

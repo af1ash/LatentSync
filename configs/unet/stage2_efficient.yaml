@@ -1,13 +1,13 @@
 data:
   syncnet_config_path: configs/syncnet/syncnet_16_pixel_attn.yaml
-  train_output_dir: debug/unet/stage2
-  train_fileslist: /home/lxb/workspace/LatentSync/data/filelist/mw_256.txt
+  train_output_dir: debug/unet/xiaowei
+  train_fileslist: /home/lxb/workspace/LatentSync/data/xiaowei256/filelist.txt
   train_data_dir: ""
   audio_embeds_cache_dir: /home/lxb/workspace/LatentSync/data/xiaomaall256/audio_cache/embeds
   audio_mel_cache_dir: /home/lxb/workspace/LatentSync/data/xiaomaall256/audio_cache/mel
 
-  val_video_path: local/cases/静止说话4s.mov
-  val_audio_path: local/cases/kaichang.wav
+  val_video_path: /home/lxb/workspace/livetalk/local/assets/video/xiaowei_jingmo.mp4
+  val_audio_path: /home/lxb/workspace/livetalk/local/assets/audio/xiaowei_slog.wav
   batch_size: 1 # 4
   num_workers: 1 # 12
   num_frames: 16

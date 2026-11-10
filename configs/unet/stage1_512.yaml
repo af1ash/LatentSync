@@ -1,25 +1,25 @@
 data:
   syncnet_config_path: configs/syncnet/syncnet_16_pixel_attn.yaml
   train_output_dir: debug/unet
-  train_fileslist: /mnt/bn/maliva-gen-ai-v2/chunyu.li/fileslist/data_v10_core.txt
-  train_data_dir: ""
-  audio_embeds_cache_dir: /mnt/bn/maliva-gen-ai-v2/chunyu.li/audio_cache/embeds
-  audio_mel_cache_dir: /mnt/bn/maliva-gen-ai-v2/chunyu.li/audio_cache/mel
+  train_fileslist: /home/lxb/workspace/LatentSync/data/xiaoma_1.txt
+  train_data_dir: /home/lxb/workspace/LatentSync/data/high_visual_quality
+  audio_embeds_cache_dir: /home/lxb/workspace/LatentSync/data/audio_cache/embeds
+  audio_mel_cache_dir: /home/lxb/workspace/LatentSync/data/audio_cache/mel
 
-  val_video_path: assets/demo1_video.mp4
-  val_audio_path: assets/demo1_audio.wav
+  val_video_path: assets/双手开合.mp4
+  val_audio_path: assets/kaichang.wav
   batch_size: 1 # 8
-  num_workers: 12 # 12
+  num_workers: 2 # 12
   num_frames: 16
   resolution: 512
-  mask_image_path: latentsync/utils/mask.png
+  mask_image_path: latentsync/utils/mask3.png
   audio_sample_rate: 16000
   video_fps: 25
-  audio_feat_length: [2, 2]
+  audio_feat_length: [3, 3]
 
 ckpt:
-  resume_ckpt_path: checkpoints/latentsync_unet.pt
-  save_ckpt_steps: 10000
+  resume_ckpt_path: checkpoints/LatentSync-1.6/latentsync_unet.pt
+  save_ckpt_steps: 100
 
 run:
   pixel_space_supervise: false
@@ -35,7 +35,7 @@ run:
   mixed_noise_alpha: 1 # 1
   mixed_precision_training: true
   enable_gradient_checkpointing: true
-  max_train_steps: 10000000
+  max_train_steps: 1000
   max_train_epochs: -1
 
 optimizer:

@@ -32,7 +32,7 @@ def load_fixed_mask(resolution: int, mask_image_path="latentsync/utils/mask.png"
 
 
 class ImageProcessor:
-    def __init__(self, resolution: int = 512, device: str = "cpu", mask_image=None):
+    def __init__(self, resolution: int = 512, device: str = "cpu", mask_image=None, model_dir="checkpoints/auxiliary"):
         self.resolution = resolution
         self.resize = transforms.Resize(
             (resolution, resolution), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
@@ -49,7 +49,7 @@ class ImageProcessor:
         if device == "cpu":
             self.face_detector = None
         else:
-            self.face_detector = FaceDetector(device=device)
+            self.face_detector = FaceDetector(device=device, root=model_dir)
 
     def affine_transform(self, image: torch.Tensor) -> np.ndarray:
         if self.face_detector is None:

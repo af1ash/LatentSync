@@ -52,6 +52,7 @@ from eval.syncnet import SyncNetEval
 from eval.syncnet_detect import SyncNetDetector
 from eval.eval_sync_conf import syncnet_eval
 import lpips
+from torch.utils.tensorboard import SummaryWriter
 
 
 logger = get_logger(__name__)
@@ -71,6 +72,8 @@ def main(config):
     folder_name = "train" + datetime.datetime.now().strftime(f"-%Y_%m_%d-%H:%M:%S")
     output_dir = os.path.join(config.data.train_output_dir, folder_name)
 
+    summary_dir = os.path.join(output_dir, "summary")
+    writer = SummaryWriter(summary_dir)
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -85,6 +88,7 @@ def main(config):
         os.makedirs(f"{output_dir}/checkpoints", exist_ok=True)
         os.makedirs(f"{output_dir}/val_videos", exist_ok=True)
         os.makedirs(f"{output_dir}/sync_conf_results", exist_ok=True)
+        os.makedirs(f"{output_dir}/summary", exist_ok=True)
         shutil.copy(config.unet_config_path, output_dir)
         shutil.copy(config.data.syncnet_config_path, output_dir)
 
@@ -92,7 +96,7 @@ def main(config):
 
     noise_scheduler = DDIMScheduler.from_pretrained("configs")
 
-    vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16)
+    vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16, local_files_only=True)
     vae.config.scaling_factor = 0.18215
     vae.config.shift_factor = 0
 
@@ -128,6 +132,8 @@ def main(config):
         config.ckpt.resume_ckpt_path,
         device=device,
     )
+    # TODO 一阶段训练结果, 在二阶段使用是导致无法开始
+    # resume_global_step = 0
 
     if config.model.add_audio_layer and config.run.use_syncnet:
         syncnet_config = OmegaConf.load(config.data.syncnet_config_path)
@@ -221,7 +227,8 @@ def main(config):
     pipeline.set_progress_bar_config(disable=True)
 
     # DDP warpper
-    unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
+    # TODO 暂时关闭掉分布式训练
+    # unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader))
@@ -238,6 +245,8 @@ def main(config):
         logger.info(f"  Instantaneous batch size per device = {config.data.batch_size}")
         logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
         logger.info(f"  Total optimization steps = {config.run.max_train_steps}")
+        model_loaded_memeory = torch.cuda.memory_allocated() / 1024**3      # GB
+        logger.info(f"  {model_loaded_memeory=:.2f} GB")
     global_step = resume_global_step
     first_epoch = resume_global_step // num_update_steps_per_epoch
 
@@ -439,8 +448,6 @@ def main(config):
                 """ <<< gradient clipping <<< """
                 optimizer.step()
 
-            # Check the grad of attn blocks for debugging
-            # print(unet.module.up_blocks[3].attentions[2].transformer_blocks[0].attn2.to_q.weight.grad)
 
             lr_scheduler.step()
             progress_bar.update(1)
@@ -453,7 +460,8 @@ def main(config):
                 model_save_path = os.path.join(output_dir, f"checkpoints/checkpoint-{global_step}.pt")
                 state_dict = {
                     "global_step": global_step,
-                    "state_dict": unet.module.state_dict(),
+                    # "state_dict": unet.module.state_dict(),
+                    "state_dict": unet.state_dict(),
                 }
                 try:
                     torch.save(state_dict, model_save_path)
@@ -467,6 +475,7 @@ def main(config):
                 validation_video_out_path = os.path.join(output_dir, f"val_videos/val_video_{global_step}.mp4")
 
                 with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    # pipeline(
                     pipeline(
                         config.data.val_video_path,
                         config.data.val_audio_path,
@@ -495,9 +504,16 @@ def main(config):
                         os.path.join(output_dir, f"sync_conf_results/sync_conf_chart-{global_step}.png"),
                         ("Sync confidence", val_step_list, sync_conf_list),
                     )
+                    writer.add_scalar('Sync confidence', conf, global_step)
 
-            logs = {"step_loss": loss.item(), "epoch": epoch}
+            vram = torch.cuda.max_memory_allocated()
+            logs = {"step_loss": loss.item(), "epoch": epoch, 
+                    "recon_loss": recon_loss.item(), "sync_loss": sync_loss.item(), 
+                    "lpips_loss": lpips_loss.item(), "trepa_loss": trepa_loss.item(),
+                    "vram": vram
+                    }
             progress_bar.set_postfix(**logs)
+            writer.add_scalars('training loss', logs , global_step)
 
             if global_step >= config.run.max_train_steps:
                 break

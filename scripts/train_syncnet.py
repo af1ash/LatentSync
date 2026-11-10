@@ -67,7 +67,7 @@ def main(config):
     device = torch.device(local_rank)
 
     if config.data.latent_space:
-        vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16)
+        vae = AutoencoderKL.from_pretrained("checkpoints/stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16, local_files_only=True)
         vae.requires_grad_(False)
         vae.to(device)
     else:

@@ -121,11 +121,14 @@ class Audio2Feature:
         if self.audio_embeds_cache_dir == "" or self.audio_embeds_cache_dir is None:
             return self._audio2feat(audio_path)
 
-        audio_embeds_cache_path = os.path.join(
-            self.audio_embeds_cache_dir, os.path.basename(audio_path).replace(".mp4", "_embeds.pt")
-        )
+        if isinstance(audio_path, str):
+            audio_embeds_cache_path = os.path.join(
+                self.audio_embeds_cache_dir, os.path.basename(audio_path).replace(".mp4", "_embeds.pt")
+            )
+        else:
+            audio_embeds_cache_path = None
 
-        if os.path.isfile(audio_embeds_cache_path):
+        if audio_embeds_cache_path and  os.path.isfile(audio_embeds_cache_path):
             try:
                 audio_feat = torch.load(audio_embeds_cache_path, weights_only=True)
             except Exception as e:

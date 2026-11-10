@@ -51,3 +51,7 @@ wandb/
 !/internal/*.png
 .cog/
 weights/
+# Python packaging artifacts
+*.egg-info/
+build/
+dist/

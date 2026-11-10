@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "latentsync"
+version = "1.6.0"
+description = "Audio-conditioned latent diffusion for lip synchronization"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["latentsync", "latentsync.*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"latentsync.utils" = ["mask*.png"]
+"latentsync.whisper.whisper" = ["assets/*.npz", "assets/*/*.json", "assets/*/*.txt"]
+"latentsync.whisper.whisper.normalizers" = ["*.json"]

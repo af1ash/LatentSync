@@ -19,12 +19,18 @@ from einops import rearrange
 import torch
 import numpy as np
 from typing import Union
+from pathlib import Path
 from .affine_transform import AlignRestore
 from .face_detector import FaceDetector
 
 
 def load_fixed_mask(resolution: int, mask_image_path="latentsync/utils/mask.png") -> torch.Tensor:
-    mask_image = cv2.imread(mask_image_path)
+    # Resolve the built-in mask independently of the caller's working directory.
+    if mask_image_path is None or str(mask_image_path) == "latentsync/utils/mask.png":
+        mask_image_path = Path(__file__).with_name("mask.png")
+    mask_image = cv2.imread(str(mask_image_path))
+    if mask_image is None:
+        raise FileNotFoundError(f"Cannot read mask image: {mask_image_path}")
     mask_image = cv2.cvtColor(mask_image, cv2.COLOR_BGR2RGB)
     mask_image = cv2.resize(mask_image, (resolution, resolution), interpolation=cv2.INTER_LANCZOS4) / 255.0
     mask_image = rearrange(torch.from_numpy(mask_image), "h w c -> c h w")

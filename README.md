@@ -86,6 +86,43 @@ LatentSync uses the [Whisper](https://github.com/openai/whisper) to convert mels
 
 ## 🔧 Setting up the Environment
 
+### Editable installation
+
+Use Python 3.10 in the Linux/CUDA environment used by this project. From the repository root:
+
+```bash
+python -m pip install -e .
+```
+
+This registers `latentsync` in the active environment, so other projects can import it
+without modifying `PYTHONPATH`. Source edits take effect immediately.
+`requirements-runtime.txt` declares the dependencies; `requirements.txt` installs the
+same editable project. The dependency versions follow the original upstream set,
+with the conflicting duplicate version block removed. OpenCV uses the contrib build
+required by MediaPipe rather than installing two distributions providing `cv2`.
+
+If you already manage the runtime dependencies separately:
+
+```bash
+python -m pip install -e . --no-deps
+```
+
+FFmpeg, CUDA, and model checkpoints are still installed separately. For a particular
+CUDA build, install the matching PyTorch/torchvision wheels before installing this
+project (the pinned versions are 2.5.1/0.20.1). For example:
+
+```bash
+python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install -e .
+```
+
+Run the existing inference/training scripts from the repository root: their config,
+checkpoint, and output paths remain relative to the working directory. Package
+installation includes the built-in masks and Whisper tokenizer/mel assets, but does
+not bundle checkpoints, datasets, or the scripts as command-line entry points.
+
+
+
 Install the required packages and download the checkpoints via:
 
 ```bash

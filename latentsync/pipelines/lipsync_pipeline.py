@@ -1155,6 +1155,15 @@ class LipsyncPipeline(DiffusionPipeline):
                     frame_rgb = org_frame[:, :, :3]
                 else:
                     frame_rgb = org_frame
+                    # alpha = orgframe[:, :, 3]
+                    # bg_r, bg_g, bg_b = 0, 255, 0
+                    # alpha_normal = alpha.astype(float) / 255.0
+                    # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
+                    # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
+                    # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
+                    # image = np.stack([r_out, g_out, b_out], axis=-1)
+                    # orgframe = orgframe[:, :, :3]
+                    # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
 
                 results = self.yolopose(frame_rgb, verbose=False)
 
@@ -1163,20 +1172,6 @@ class LipsyncPipeline(DiffusionPipeline):
                 hbbox = self.get_head_bbox(keypoints, confidences, frame_rgb.shape)
                 x1, y1, x2, y2 = hbbox
                 crop_frame = frame_rgb[y1:y2, x1:x2]
-
-                if self.gfpgan:
-                    # out_frame = self.boxblur(out_frame, radius=1)
-                    # out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
-                    gframe = crop_frame.copy()
-                    _, _, new_gframe = self.gfpgan.enhance(
-                        gframe,
-                        has_aligned=False,
-                        only_center_face=True,
-                        paste_back=True,
-                        weight=0.95,
-                        bgr2rgb=False
-                        )
-                    crop_frame = new_gframe
 
                 candidate_frame = self.affine_transform_face(crop_frame, gi, one_euro_filter)
                 candidate_frame["input_img"] = org_frame
@@ -1581,7 +1576,7 @@ class LipsyncPipeline(DiffusionPipeline):
         if debug:
             print("enable debug info in out video")
         # check_ffmpeg_installed()
-        weight = kwargs.get("weight", 0.95)
+
         # 0. Define call parameters
         device = self._execution_device
         mask_image = load_fixed_mask(height, mask_image_path)
@@ -1713,7 +1708,6 @@ class LipsyncPipeline(DiffusionPipeline):
                 decoded_latents, ref_pixel_values, 1 - masks, device, weight_dtype
             )
             # synced_video_frames.append(decoded_latents)
-            alpha = None 
             # decoded_latents = inference_faces
             for index, new_face in enumerate(decoded_latents):
 
@@ -1735,24 +1729,12 @@ class LipsyncPipeline(DiffusionPipeline):
                 oframe = vframe_batch[index]["video"]
                 affine_matrice = vframe_batch[index]["affine"]
                 out_frame = self.image_processor.restorer.restore_img(oframe, face, affine_matrice)
-                if False and self.gfpgan:
+                if self.gfpgan:
                     # fbbox = fbboxs[index]
                     # fbbox = vframe_batch[index]["fbbox"]
                     # x1, y1, x2, y2 = fbbox
-                    # gframe = cv2.cvtColor(out_frame.copy(), cv2.COLOR_RGB2BGR)
-                    # out_frame = self.boxblur(out_frame, radius=1)
-                    # out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=0.96)
-                    # out_frame = cv2.cvtColor(new_gframe, cv2.COLOR_BGR2RGB)
-                    gframe = out_frame.copy()
-                    _, _, new_gframe = self.gfpgan.enhance(
-                        gframe,
-                        has_aligned=False,
-                        only_center_face=True,
-                        paste_back=True,
-                        weight=weight,
-                        bgr2rgb=False
-                        )
-                    out_frame = new_gframe
+                    out_frame = self.boxblur(out_frame, radius=1)
+                    out_frame = self.face_enhance1(out_frame.copy(), fidelity_weight=kwargs.get("fidelity_weight", 0.96))
                     # out_frame[y1:y2, x1:x2] = gan_face
                 # else:
                 #     out_frame = self.boxblur(out_frame)
@@ -1770,6 +1752,7 @@ class LipsyncPipeline(DiffusionPipeline):
                 # x1, y1, x2, y2 = vframe_batch[index]['fbbox']
                 # cv2.rectangle(out_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 input_img = vframe_batch[index]["input_img"].copy()
+                alpha = None 
                 if input_img.shape[-1] == 4:
                     if not (
                         np.all(input_img[:, :, 3] == 255) or np.all(input_img[:, :, 3] == 0)
@@ -1801,17 +1784,6 @@ class LipsyncPipeline(DiffusionPipeline):
             except StopIteration:
                 candidate_geneter = vr.read_iter()
                 org_frame = next(candidate_geneter)
-
-            # alpha = orgframe[:, :, 3]
-            # bg_r, bg_g, bg_b = 0, 255, 0
-            # alpha_normal = alpha.astype(float) / 255.0
-            # r_out = (orgframe[:, :, 0] + bg_r * (1 - alpha_normal)).astype('uint8')
-            # g_out = (orgframe[:, :, 1] + bg_g * (1 - alpha_normal)).astype('uint8')
-            # b_out = (orgframe[:, :, 2] + bg_b * (1 - alpha_normal)).astype('uint8')
-            # image = np.stack([r_out, g_out, b_out], axis=-1)
-            # orgframe = orgframe[:, :, :3]
-            # cv2.putText(frame, f"frame={i}", (150, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0,0), 2)
-
             yield {"video": org_frame}
             count += 1
 
@@ -1898,6 +1870,8 @@ class LipsyncPipeline(DiffusionPipeline):
                         # 单声道
                         audio_samples = librosa.resample(audio_samples, orig_sr=orig_sr, target_sr=target_sr)
                 audio_samples = audio_samples.astype(np.float32)[0]
+                # whisper_feature = self.audio_encoder.audio2feat(audio_samples)
+                # whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
             else:
                 audio_samples = read_audio(audio_path)
                 audio_samples = audio_samples.numpy().astype(np.float32)
@@ -1911,6 +1885,8 @@ class LipsyncPipeline(DiffusionPipeline):
             video_fps = video_fps * self.rife.multi
         synced_video_frames = []
 
+        # audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)
+        # audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
         audio_chunk_size = int(audio_sample_rate / video_fps)
         audio_channel = 1
         video_out_path = Path(video_out_path)
@@ -1918,7 +1894,7 @@ class LipsyncPipeline(DiffusionPipeline):
         vwriter = VideoWriter(str(video_out_path), codec_info=vformat)
 
         num_inferences = math.ceil(target_frame_num / num_frames)
-
+        print(f"{target_frame_num=},{len(whisper_chunks)=},{num_inferences=}")
         frames_gen = self.lipsync(
             num_inferences, audio_samples, whisper_chunks, frame_gen, 
             audio_chunk_size, audio_channel,

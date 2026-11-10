@@ -16,49 +16,54 @@ import argparse
 import os
 from omegaconf import OmegaConf
 import torch
+import json
 from diffusers import AutoencoderKL, DDIMScheduler
 from latentsync.models.unet import UNet3DConditionModel
 from latentsync.pipelines.lipsync_pipeline import LipsyncPipeline
 from accelerate.utils import set_seed
 from latentsync.whisper.audio2feature import Audio2Feature
-from DeepCache import DeepCacheSDHelper
+# from DeepCache import DeepCacheSDHelper
 
-from Practical_RIFE.RIFE_HDv3 import RIFE
+from basicsr.utils.download_util import load_file_from_url
+from basicsr.utils.registry import ARCH_REGISTRY
 from ultralytics import YOLO
+# from facelib.utils.face_restoration_helper import FaceRestoreHelper
+# from Practical_RIFE.RIFE_HDv3 import RIFE
+# from text2video.musetalk.new_musetalk import Avatar
 
-def set_realesrgan():
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    from basicsr.utils.realesrgan_utils import RealESRGANer
+# def set_realesrgan(model_dir):
+#     from basicsr.archs.rrdbnet_arch import RRDBNet
+#     from basicsr.utils.realesrgan_utils import RealESRGANer
 
-    use_half = False
-    if torch.cuda.is_available(): # set False in CPU/MPS mode
-        no_half_gpu_list = ['1650', '1660'] # set False for GPUs that don't support f16
-        if not True in [gpu in torch.cuda.get_device_name(0) for gpu in no_half_gpu_list]:
-            use_half = True
+#     use_half = False
+#     if torch.cuda.is_available(): # set False in CPU/MPS mode
+#         no_half_gpu_list = ['1650', '1660'] # set False for GPUs that don't support f16
+#         if not True in [gpu in torch.cuda.get_device_name(0) for gpu in no_half_gpu_list]:
+#             use_half = True
 
-    model = RRDBNet(
-        num_in_ch=3,
-        num_out_ch=3,
-        num_feat=64,
-        num_block=23,
-        num_grow_ch=32,
-        scale=2,
-    )
-    upsampler = RealESRGANer(
-        scale=2,
-        model_path="https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/RealESRGAN_x2plus.pth",
-        model=model,
-        tile=400,
-        tile_pad=40,
-        pre_pad=0,
-        half=use_half
-    )
+#     model = RRDBNet(
+#         num_in_ch=3,
+#         num_out_ch=3,
+#         num_feat=64,
+#         num_block=23,
+#         num_grow_ch=32,
+#         scale=2,
+#     )
+#     upsampler = RealESRGANer(
+#         scale=2,
+#         model_path=f"{model_dir}/realesrgan/RealESRGAN_x2plus.pth",
+#         model=model,
+#         tile=400,
+#         tile_pad=40,
+#         pre_pad=0,
+#         half=use_half
+#     )
 
-    return upsampler
+#     return upsampler
 
 
 def main(config, args):
-    if not os.path.exists(args.video_path):
+    if not os.path.exists(args.video_path) and not args.avatar_id:
         raise RuntimeError(f"Video path '{args.video_path}' not found")
     if not os.path.exists(args.audio_path):
         raise RuntimeError(f"Audio path '{args.audio_path}' not found")
@@ -95,107 +100,54 @@ def main(config, args):
     unet, _ = UNet3DConditionModel.from_pretrained(
         OmegaConf.to_container(config.model),
         args.inference_ckpt_path,
-        device="cpu",
+        device="cuda",
     )
 
     unet = unet.to(dtype=dtype)
-    device = "cuda"
 
+    rife = None
     gfpgan = None
     face_helper = None
     face_upsampler = None
-    if not args.disable_codeformer:
-        if args.face_restore == "gfpgan":
-            from gfpgan import GFPGANer
-            # ------------------------ set up GFPGAN restorer ------------------------
-            if args.version == '1':
-                arch = 'original'
-                channel_multiplier = 1
-                model_name = 'GFPGANv1'
-                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v0.1.0/GFPGANv1.pth'
-            elif args.version == '1.2':
-                arch = 'clean'
-                channel_multiplier = 2
-                model_name = 'GFPGANCleanv1-NoCE-C2'
-                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v0.2.0/GFPGANCleanv1-NoCE-C2.pth'
-            elif args.version == '1.3':
-                arch = 'clean'
-                channel_multiplier = 2
-                model_name = 'GFPGANv1.3'
-                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth'
-            elif args.version == '1.4':
-                arch = 'clean'
-                channel_multiplier = 2
-                model_name = 'GFPGANv1.4'
-                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth'
-            elif args.version == 'RestoreFormer':
-                arch = 'RestoreFormer'
-                channel_multiplier = 2
-                model_name = 'RestoreFormer'
-                url = 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth'
-            else:
-                raise ValueError(f'Wrong model version {args.version}.')
-
-            # determine model paths
-            model_path = os.path.join('experiments/pretrained_models', model_name + '.pth')
-            if not os.path.isfile(model_path):
-                # model_path = os.path.join('gfpgan/weights', model_name + '.pth')
-                model_path = os.path.join(f'{model_dir}/gfpgan_weights', model_name + '.pth')
-            if not os.path.isfile(model_path):
-                # download pre-trained models from url
-                model_path = url
-            bg_upsampler = None
-            # bg_upsampler = set_realesrgan()
-            gfpgan = GFPGANer(
-                model_path=model_path,
-                upscale=args.upscale,
-                arch=arch,
-                channel_multiplier=channel_multiplier,
-                bg_upsampler=bg_upsampler,
-                model_dir=model_dir
-                )
-            face_helper = None
-        elif args.face_restore == "codeformer":
-            from basicsr.utils.download_util import load_file_from_url
-            from basicsr.utils.registry import ARCH_REGISTRY
-            from facelib.utils.face_restoration_helper import FaceRestoreHelper
-            pretrain_model_url = {
-                'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
-            }
-            net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
-                                                    connect_list=['32', '64', '128', '256']).to(device)
+    # if not args.disable_codeformer:
+    #     device = "cuda"
+    #     pretrain_model_url = {
+    #         'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
+    #     }
+    #     net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, 
+    #                                             connect_list=['32', '64', '128', '256']).to(device)
     
-            # ckpt_path = 'weights/CodeFormer/codeformer.pth'
-            ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
-                                            model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
-            checkpoint = torch.load(ckpt_path)['params_ema']
-            net.load_state_dict(checkpoint)
-            net.eval()
-            gfpgan = net
-            face_helper = FaceRestoreHelper(
-                args.upscale,
-                face_size=512,
-                crop_ratio=(1, 1),
-                det_model = args.detection_model,
-                save_ext='png',
-                use_parse=True,
-                device=device,
-                model_dir=model_dir
-            )
+    #     # ckpt_path = 'weights/CodeFormer/codeformer.pth'
+    #     ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'], 
+    #                                     model_dir=f'{model_dir}/CodeFormer', progress=True, file_name=None)
+    #     checkpoint = torch.load(ckpt_path)['params_ema']
+    #     net.load_state_dict(checkpoint)
+    #     net.eval()
+    #     gfpgan = net
+    #     face_helper = FaceRestoreHelper(
+    #         args.upscale,
+    #         face_size=512,
+    #         crop_ratio=(1, 1),
+    #         det_model = args.detection_model,
+    #         save_ext='png',
+    #         use_parse=True,
+    #         device=device,
+    #         model_dir=model_dir
+    #     )
 
-            face_upsampler = set_realesrgan()
+    #     # bg_upsampler = set_realesrgan()
+    #     face_upsampler = set_realesrgan(model_dir)
 
-    rife = None
-    if args.fps > 25:
-        if args.UHD:
-            args.scale = 0.5
-        else:
-            scale = args.scale
-        multi = int(args.fps / 25)
-        rife = RIFE(
-            f"{model_dir}/Practical_RIFE", multi, exp=args.exp,
-            scale=scale, usefp16=args.fp16
-        )
+    # if args.fps > 25:
+    #     if args.UHD:
+    #         args.scale = 0.5
+    #     else:
+    #         scale = args.scale
+    #     multi = int(args.fps / 25)
+    #     rife = RIFE(
+    #         f"{model_dir}/Practical_RIFE", multi, exp=args.exp,
+    #         scale=scale, usefp16=args.fp16
+    #     )
 
     yolopose = YOLO(f"{model_dir}/yolo11n-pose.pt")
     pipeline = LipsyncPipeline(
@@ -211,10 +163,10 @@ def main(config, args):
     ).to("cuda")
 
     # use DeepCache
-    if args.enable_deepcache:
-        helper = DeepCacheSDHelper(pipe=pipeline)
-        helper.set_params(cache_interval=3, cache_branch_id=0)
-        helper.enable()
+    # if args.enable_deepcache:
+    #     helper = DeepCacheSDHelper(pipe=pipeline)
+    #     helper.set_params(cache_interval=3, cache_branch_id=0)
+    #     helper.enable()
 
     if args.seed != -1:
         set_seed(args.seed)
@@ -222,6 +174,17 @@ def main(config, args):
         torch.seed()
 
     print(f"Initial seed: {torch.initial_seed()}")
+    avatar = None
+    # if args.avatar_id:
+    #     movement = None
+    #     if args.video_script:
+    #         try:
+    #             movement = json.loads(args.video_script)
+    #         except Exception:
+    #             with open(args.video_script, "rb") as f:
+    #                 movement = json.loads(f.read())
+    #     asetting = {"avatar_id": args.avatar_id, "preprepare": True}
+    #     avatar = Avatar(asetting, args.avatar_dir, video_scripts=movement, rgb2bgr=False)
 
     # pipeline(
     pipeline.stream1(
@@ -239,7 +202,8 @@ def main(config, args):
         strict=args.strict,
         vformat=args.vformat,
         debug=args.debug,
-        weight=args.weight
+        avatar=avatar,
+        model_dir=model_dir
     )
 
 
@@ -248,7 +212,7 @@ if __name__ == "__main__":
     parser.add_argument("--unet_config_path", type=str, default="configs/unet.yaml")
     parser.add_argument("--inference_ckpt_path", type=str, required=True)
     parser.add_argument("--model_dir", type=str, default="checkpoints", required=False)
-    parser.add_argument("--video_path", type=str, required=True)
+    parser.add_argument("--video_path", type=str, required=False)
     parser.add_argument("--audio_path", type=str, required=True)
     parser.add_argument("--video_out_path", type=str, required=True)
     parser.add_argument("--inference_steps", type=int, default=20)
@@ -281,5 +245,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)
-
+    print(args)
     main(config, args)
